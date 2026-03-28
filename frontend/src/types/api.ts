@@ -4,8 +4,10 @@ export interface Video {
   slug: string;
   description: string;
   duration: number;
+  source_path: string | null;
   thumbnail_path: string | null;
   manifest_path: string | null;
+  preview_start_time: number | null;
   // Resolved URLs (from backend, ready to use directly)
   thumbnail_url: string;
   manifest_url: string;

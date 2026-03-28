@@ -13,6 +13,7 @@ import {
   Loader2,
   Clock,
   RefreshCw,
+  ScanSearch,
 } from "lucide-react";
 import { api } from "@/api/client";
 import type { Video, Category, PaginatedResponse, AdminTenant } from "@/types/api";
@@ -348,6 +349,15 @@ export default function VideosPage() {
     }
   };
 
+  // AI scene analysis — pick best preview timestamp
+  const handleAnalyzePreview = async (video: Video) => {
+    try {
+      await api.post(`/admin/videos/${video.id}/analyze-preview`);
+    } catch {
+      // silent — runs in background, no immediate feedback needed
+    }
+  };
+
   // Delete
   const requestDelete = (video: Video) => {
     setConfirmVideo(video);
@@ -471,6 +481,15 @@ export default function VideosPage() {
                             title={v.status === "failed" ? "Retry Transcode" : "Transcode to HLS"}
                           >
                             <RefreshCw size={16} />
+                          </button>
+                        )}
+                        {v.source_path && (
+                          <button
+                            onClick={() => handleAnalyzePreview(v)}
+                            className={`rounded p-1.5 hover:bg-white/10 hover:text-purple-400 ${v.preview_start_time != null ? "text-purple-400" : "text-gray-400"}`}
+                            title={v.preview_start_time != null ? `Re-analyze preview (current: ${v.preview_start_time}s)` : "Analyze preview scene (AI)"}
+                          >
+                            <ScanSearch size={16} />
                           </button>
                         )}
                         <button

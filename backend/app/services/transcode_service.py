@@ -268,6 +268,18 @@ async def _transcode_pipeline(video_id: uuid.UUID) -> None:
             except Exception:
                 logger.warning("Metadata enrichment failed for video %s", video_id, exc_info=True)
 
+            # 9c. AI scene analysis — pick best preview start timestamp
+            await _publish_progress(video_id, 96, "scene_analysis")
+            try:
+                from app.services.scene_analysis import compute_preview_timestamp
+                if video.source_path:
+                    video_path = f"{settings.local_media_path}/{video.source_path}"
+                    ts = await compute_preview_timestamp(video_path, video)
+                    video.preview_start_time = ts
+                    logger.info("preview_start_time=%ss for video %s", ts, video_id)
+            except Exception:
+                logger.warning("Scene analysis failed for video %s", video_id, exc_info=True)
+
             # 10. Mark video as ready
             await _publish_progress(video_id, 95, "finalizing")
             video.status = "ready"

@@ -161,19 +161,27 @@ export default function VideoCard({ video, progressPercent, progressSeconds, wat
     const el = videoRef.current;
     if (!el) return;
     const isHls = video.manifest_url.endsWith(".m3u8");
+    // Seek to the AI-selected preview moment; fall back to 20% of duration or 30s
+    const previewStart = video.preview_start_time
+      ?? (video.duration > 0 ? video.duration * 0.20 : 30);
+
+    const startAndPlay = () => {
+      el.currentTime = previewStart;
+      el.play().catch(() => {});
+    };
 
     if (!isHls) {
       el.src = video.manifest_url;
-      el.play().catch(() => {});
+      el.addEventListener("loadedmetadata", startAndPlay, { once: true });
     } else if (Hls.isSupported()) {
       const hls = new Hls({ startLevel: 0, capLevelToPlayerSize: true });
       hls.loadSource(video.manifest_url);
       hls.attachMedia(el);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => { el.play().catch(() => {}); });
+      hls.on(Hls.Events.MANIFEST_PARSED, startAndPlay);
       hlsRef.current = hls;
     } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
       el.src = video.manifest_url;
-      el.play().catch(() => {});
+      el.addEventListener("loadedmetadata", startAndPlay, { once: true });
     }
 
     return () => {

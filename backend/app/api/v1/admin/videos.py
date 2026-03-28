@@ -1,3 +1,4 @@
+import asyncio
 import os
 import re
 import uuid
@@ -285,6 +286,31 @@ async def retranscode_video(
     await start_transcode(video_id)
 
     return video
+
+
+@router.post("/{video_id}/analyze-preview", response_model=VideoResponse)
+async def analyze_preview(
+    video_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    """Run AI scene analysis to set the optimal preview_start_time for a video."""
+    result = await db.execute(select(Video).where(Video.id == video_id))
+    video = result.scalar_one_or_none()
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    if not video.source_path:
+        raise HTTPException(status_code=400, detail="Video has no source file")
+
+    asyncio.create_task(_run_scene_analysis_bg(video_id))
+    return video
+
+
+async def _run_scene_analysis_bg(video_id: uuid.UUID) -> None:
+    from app.database import async_session
+    from app.services.scene_analysis import run_scene_analysis
+    async with async_session() as db:
+        await run_scene_analysis(video_id, db)
 
 
 @router.post("/{video_id}/feature", response_model=VideoResponse)

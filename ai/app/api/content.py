@@ -70,6 +70,24 @@ class RecommendReasonResponse(BaseModel):
     reasons: list[dict]
 
 
+class SceneCandidate(BaseModel):
+    timestamp: float   # seconds into the video
+    score: float       # scene-change intensity 0–1
+
+
+class PreviewTimestampRequest(BaseModel):
+    title: str
+    description: str = ""
+    tags: list[str] = []
+    duration_seconds: float
+    candidates: list[SceneCandidate]
+    llm_config: LLMConfig | None = None
+
+
+class PreviewTimestampResponse(BaseModel):
+    preview_start_time: float
+
+
 @router.post("/analyze", response_model=AnalyzeResponse)
 async def analyze_content(body: AnalyzeRequest):
     """Analyze video metadata and suggest tags, description, classification."""
@@ -92,6 +110,58 @@ async def analyze_content(body: AnalyzeRequest):
     except Exception:
         logger.exception("Content analysis failed")
         return AnalyzeResponse()
+
+
+_PREVIEW_TIMESTAMP_SYSTEM = """You are a film editor for a streaming platform selecting the best 30-second preview clip.
+
+Given a video's title, description, genre tags, duration, and a list of candidate timestamps (detected scene changes), choose the timestamp most likely to show an iconic, visually engaging, or emotionally compelling moment.
+
+Rules:
+- Avoid title sequences (usually the first 15% of the video)
+- Avoid credits and fade-outs (usually the last 5–10%)
+- Prefer action peaks, dramatic confrontations, or visually stunning scenes
+- For comedy: prefer a funny payoff moment (usually 30–60% in)
+- For drama/fantasy: prefer the emotional climax (usually 55–75% in)
+- For documentaries/reviews: prefer the most active demonstration segment
+
+Return valid JSON only: {"index": <0-based index into candidates array>}"""
+
+
+@router.post("/preview-timestamp", response_model=PreviewTimestampResponse)
+async def select_preview_timestamp(body: PreviewTimestampRequest):
+    """Use the local LLM to pick the best preview start timestamp from FFmpeg scene candidates."""
+    if not body.candidates:
+        # No candidates — default to 25% through the video
+        return PreviewTimestampResponse(preview_start_time=round(body.duration_seconds * 0.25, 1))
+
+    # Format candidate list for the LLM
+    duration_min = int(body.duration_seconds // 60)
+    duration_sec = int(body.duration_seconds % 60)
+    candidate_lines = "\n".join(
+        f"{i}. {c.timestamp:.1f}s ({c.timestamp/body.duration_seconds*100:.0f}% in, scene score: {c.score:.2f})"
+        for i, c in enumerate(body.candidates)
+    )
+    prompt = (
+        f'Title: "{body.title}"\n'
+        f"Description: {body.description or '(none)'}\n"
+        f"Tags: {', '.join(body.tags) or '(none)'}\n"
+        f"Duration: {duration_min}m {duration_sec}s\n\n"
+        f"Candidate timestamps:\n{candidate_lines}\n\n"
+        f'Return JSON: {{"index": <chosen index>}}'
+    )
+
+    try:
+        result = await ask_llm_json(
+            _PREVIEW_TIMESTAMP_SYSTEM, prompt, max_tokens=64, config=body.llm_config,
+        )
+        idx = int(result.get("index", 0))
+        idx = max(0, min(idx, len(body.candidates) - 1))
+        chosen = body.candidates[idx].timestamp
+    except Exception:
+        logger.warning("Preview timestamp LLM failed, using highest scene-score candidate")
+        chosen = max(body.candidates, key=lambda c: c.score).timestamp
+
+    return PreviewTimestampResponse(preview_start_time=round(chosen, 1))
 
 
 @router.post("/recommend-reasons", response_model=RecommendReasonResponse)

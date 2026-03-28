@@ -63,6 +63,7 @@ class VideoResponse(BaseModel):
     source_width: int | None = None
     source_height: int | None = None
     file_size: int
+    source_path: str | None = None
     thumbnail_path: str | None = None
     manifest_path: str | None = None
     status: str
@@ -85,6 +86,8 @@ class VideoResponse(BaseModel):
     qualities: list[VideoQualityResponse] = []
     audio_tracks: list[AudioTrackResponse] = []
     subtitle_tracks: list[SubtitleTrackResponse] = []
+
+    preview_start_time: float | None = None
 
     # Resolved URLs (populated by validator from *_path fields)
     thumbnail_url: str = ""

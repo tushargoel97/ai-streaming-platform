@@ -85,6 +85,7 @@ class Settings(BaseSettings):
     omdb_api_key: str = ""
     tmdb_api_key: str = ""
 
+
     # AI Service
     ai_service_url: str = "http://ai:8100"
 

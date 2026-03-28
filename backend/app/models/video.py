@@ -45,6 +45,8 @@ class Video(Base):
     # Streaming
     manifest_path: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
     thumbnail_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # AI-selected preview start time (seconds into video) — avoids title cards
+    preview_start_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     # Status
     status: Mapped[str] = mapped_column(String(20), default="uploading")
