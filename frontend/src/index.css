@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+:root {
+  --primary: #e50914;
+  --secondary: #141414;
+  --background: #000000;
+  --foreground: #ffffff;
+  --muted: #808080;
+  --card: #1a1a1a;
+  --border: #2a2a2a;
+}
+
+body {
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}

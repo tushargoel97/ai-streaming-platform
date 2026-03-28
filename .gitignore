@@ -6,6 +6,9 @@ __pycache__/
 # C extensions
 *.so
 
+#macOS
+*.DS_Store
+
 # Distribution / packaging
 .Python
 build/
@@ -116,6 +119,14 @@ ipython_config.py
 #pdm.toml
 .pdm-python
 .pdm-build/
+
+#media
+.mp4
+.m3u8
+.m4s
+.webp
+.jpg
+.png
 
 # pixi
 #   Similar to Pipfile.lock, it is generally recommended to include pixi.lock in version control.
