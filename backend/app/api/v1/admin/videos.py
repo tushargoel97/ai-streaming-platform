@@ -275,8 +275,8 @@ async def retranscode_video(
     video = result.scalar_one_or_none()
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
-    if video.status not in ("failed", "processing"):
-        raise HTTPException(status_code=400, detail="Video is not in a retranscodable state")
+    if video.status == "processing":
+        raise HTTPException(status_code=400, detail="Video is already being transcoded")
 
     video.status = "processing"
     video.updated_at = datetime.utcnow()

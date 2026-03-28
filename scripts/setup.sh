@@ -40,7 +40,13 @@ info "Creating media directories..."
 mkdir -p media/uploads media/transcoded media/thumbnails media/live
 ok "Media directories ready"
 
-# ── 3. Build images ───────────────────────────────────────────
+# ── 3. Tear down existing state ───────────────────────────────
+echo ""
+info "Stopping any existing containers and removing volumes for a clean start..."
+docker compose down -v --remove-orphans 2>/dev/null || true
+ok "Previous state cleared"
+
+# ── 4. Build images ───────────────────────────────────────────
 echo ""
 info "Building Docker images (this may take a while on first run)..."
 if docker compose build; then
@@ -49,13 +55,13 @@ else
     fail "Docker build failed. Check output above."
 fi
 
-# ── 4. Start services ────────────────────────────────────────
+# ── 5. Start services ────────────────────────────────────────
 echo ""
 info "Starting services..."
 docker compose up -d
 ok "Services starting"
 
-# ── 5. Wait for health ───────────────────────────────────────
+# ── 6. Wait for health ───────────────────────────────────────
 echo ""
 info "Waiting for services to become healthy..."
 
@@ -101,7 +107,7 @@ wait_healthy backend 60
 wait_healthy frontend 60
 wait_healthy nginx 30
 
-# ── 6. Run migrations ────────────────────────────────────────
+# ── 7. Run migrations ────────────────────────────────────────
 echo ""
 info "Running database migrations..."
 if docker compose exec -T -e PYTHONPATH=/app backend alembic upgrade head; then
@@ -110,7 +116,7 @@ else
     fail "Migration failed. Check logs: docker compose logs backend"
 fi
 
-# ── 7. Seed data ─────────────────────────────────────────────
+# ── 8. Seed data ─────────────────────────────────────────────
 echo ""
 info "Seeding demo data (includes downloading sample videos)..."
 echo ""
@@ -120,7 +126,7 @@ else
     warn "Seed had issues. Check output above."
 fi
 
-# ── 8. Add /etc/hosts entries (optional) ─────────────────────
+# ── 9. Add /etc/hosts entries (optional) ─────────────────────
 echo ""
 info "Multi-tenant domains"
 echo "  Add these to /etc/hosts for multi-tenant testing:"

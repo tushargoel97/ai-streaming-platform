@@ -578,26 +578,9 @@ def upgrade() -> None:
         sa.UniqueConstraint("user_id", "season_pass_config_id"),
     )
 
-    # ── AI Settings (singleton) ──────────────────────────────────
-    op.create_table(
-        "ai_settings",
-        sa.Column("id", sa.UUID(), nullable=False),
-        sa.Column("use_external_llm", sa.Boolean(), server_default="false", nullable=False),
-        sa.Column("external_provider", sa.String(20), server_default="anthropic", nullable=False),
-        sa.Column("external_api_key", sa.Text(), server_default="", nullable=False),
-        sa.Column("external_model", sa.String(100), server_default="claude-sonnet-4-5-20241022", nullable=False),
-        sa.Column("local_model", sa.String(100), server_default="qwen2.5-3b", nullable=False),
-        sa.Column("embedding_model", sa.String(100), server_default="all-MiniLM-L6-v2", nullable=False),
-        sa.Column("auto_analyze_uploads", sa.Boolean(), server_default="true", nullable=False),
-        sa.Column("smart_search_enabled", sa.Boolean(), server_default="true", nullable=False),
-        sa.Column("recommendation_reasons", sa.Boolean(), server_default="false", nullable=False),
-        sa.Column("updated_at", sa.DateTime(), nullable=False),
-        sa.PrimaryKeyConstraint("id"),
-    )
 
 
 def downgrade() -> None:
-    op.drop_table("ai_settings")
     op.drop_index("idx_event_highlights_event", table_name="event_highlights")
     op.drop_table("event_highlights")
     op.drop_index("idx_events_live_stream", table_name="events")

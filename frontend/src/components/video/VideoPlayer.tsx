@@ -102,6 +102,9 @@ export default function VideoPlayer({
   const [currentAudioTrack, setCurrentAudioTrack] = useState(0);
   const [activeSubtitle, setActiveSubtitle] = useState<string | null>(null);
 
+  // Native resolution for MP4 playback
+  const [nativeHeight, setNativeHeight] = useState<number | null>(null);
+
   // Progress bar hover/drag
   const [progressHover, setProgressHover] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -109,11 +112,15 @@ export default function VideoPlayer({
   // ── Init HLS / MP4 ──────────────────────────────────────────────────────
 
   const isHls = manifestUrl?.endsWith(".m3u8");
+  // Guard so autoplay only fires once per mount, not on every MANIFEST_PARSED
+  // re-fire (which happens after hls.recoverMediaError) or loadedmetadata re-fire.
+  const hasAutoPlayedRef = useRef(false);
 
   useEffect(() => {
     const el = videoRef.current;
     if (!el || !manifestUrl) return;
 
+    hasAutoPlayedRef.current = false;
     setLoading(true);
 
     // Direct MP4 playback (non-HLS source)
@@ -121,10 +128,15 @@ export default function VideoPlayer({
       el.src = manifestUrl;
       const onLoaded = () => {
         if (startTime > 0) el.currentTime = startTime;
-        if (autoPlay) el.play().catch(() => {});
+        if (autoPlay && !hasAutoPlayedRef.current) {
+          hasAutoPlayedRef.current = true;
+          el.play().catch(() => {});
+        }
+        setNativeHeight(el.videoHeight || null);
         setLoading(false);
       };
-      el.addEventListener("loadedmetadata", onLoaded);
+      // { once: true } ensures this never re-fires after network recovery reloads the element
+      el.addEventListener("loadedmetadata", onLoaded, { once: true });
       return () => {
         el.removeEventListener("loadedmetadata", onLoaded);
         el.removeAttribute("src");
@@ -156,7 +168,12 @@ export default function VideoPlayer({
         setHlsAudioTracks(audioTracks);
 
         if (startTime > 0) el.currentTime = startTime;
-        if (autoPlay) el.play().catch(() => {});
+        // Only autoplay on the very first MANIFEST_PARSED — not on re-fires
+        // triggered by recoverMediaError() which calls media.load() internally.
+        if (autoPlay && !hasAutoPlayedRef.current) {
+          hasAutoPlayedRef.current = true;
+          el.play().catch(() => {});
+        }
         setLoading(false);
       });
 
@@ -176,12 +193,16 @@ export default function VideoPlayer({
 
       hlsRef.current = hls;
     } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
+      // Native HLS (Safari)
       el.src = manifestUrl;
       el.addEventListener("loadedmetadata", () => {
         if (startTime > 0) el.currentTime = startTime;
-        if (autoPlay) el.play().catch(() => {});
+        if (autoPlay && !hasAutoPlayedRef.current) {
+          hasAutoPlayedRef.current = true;
+          el.play().catch(() => {});
+        }
         setLoading(false);
-      });
+      }, { once: true });
     }
 
     return () => {
@@ -563,7 +584,7 @@ export default function VideoPlayer({
             </button>
 
             {/* Quality */}
-            {hlsLevels.length > 1 && (
+            {hlsLevels.length > 1 ? (
               <button
                 onClick={(e) => { e.stopPropagation(); setSettingsPanel("quality"); }}
                 className="flex w-full items-center gap-3 px-4 py-3 text-sm text-white transition-colors hover:bg-white/10"
@@ -573,7 +594,13 @@ export default function VideoPlayer({
                 <span className="text-gray-400">{currentLevelLabel}{autoSuffix}</span>
                 <ChevronRight size={16} className="text-gray-500" />
               </button>
-            )}
+            ) : nativeHeight ? (
+              <div className="flex w-full items-center gap-3 px-4 py-3 text-sm text-white/60">
+                <MonitorPlay size={18} className="text-gray-400" />
+                <span className="flex-1 text-left">Quality</span>
+                <span className="text-gray-400">{nativeHeight}p</span>
+              </div>
+            ) : null}
 
             {/* Audio & Subtitles — always visible */}
             <button

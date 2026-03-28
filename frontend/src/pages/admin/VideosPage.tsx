@@ -464,11 +464,11 @@ export default function VideosPage() {
                     <td className="px-4 py-3 text-gray-400">{v.view_count.toLocaleString()}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
-                        {v.status === "failed" && (
+                        {v.status !== "processing" && (
                           <button
                             onClick={() => handleRetranscode(v)}
-                            className="rounded p-1.5 text-gray-400 hover:bg-white/10 hover:text-blue-400"
-                            title="Retry Transcode"
+                            className={`rounded p-1.5 hover:bg-white/10 ${v.status === "failed" ? "text-red-400 hover:text-red-300" : "text-gray-400 hover:text-blue-400"}`}
+                            title={v.status === "failed" ? "Retry Transcode" : "Transcode to HLS"}
                           >
                             <RefreshCw size={16} />
                           </button>
