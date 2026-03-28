@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 
 # Install Python dependencies
 COPY pyproject.toml .
-RUN pip install --no-cache-dir ".[dev]"
+RUN pip install --no-cache-dir .
 
 # Source code mounted as volume in dev, but copy for layer caching
 COPY . .

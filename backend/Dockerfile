@@ -9,7 +9,7 @@ WORKDIR /app
 
 # Install Python dependencies
 COPY pyproject.toml .
-RUN pip install --no-cache-dir ".[dev]"
+RUN pip install --no-cache-dir .
 
 # Source code mounted as volume in dev, but copy for layer caching
 COPY . .
