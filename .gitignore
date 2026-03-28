@@ -121,6 +121,7 @@ ipython_config.py
 .pdm-build/
 
 #media
+media/
 .mp4
 .m3u8
 .m4s
