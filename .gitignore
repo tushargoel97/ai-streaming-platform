@@ -173,6 +173,9 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
+# node modules
+node_modules/
+
 # pytype static type analyzer
 .pytype/
 
