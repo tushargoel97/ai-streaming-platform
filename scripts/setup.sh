@@ -104,6 +104,7 @@ wait_healthy postgres 60
 wait_healthy redis 30
 wait_healthy ai 120
 wait_healthy backend 60
+wait_healthy worker 60
 wait_healthy frontend 60
 wait_healthy nginx 30
 

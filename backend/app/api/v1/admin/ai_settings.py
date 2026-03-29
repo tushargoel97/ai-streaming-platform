@@ -27,6 +27,7 @@ class AISettingsResponse(BaseModel):
     external_api_key_set: bool  # don't expose the actual key
     external_model: str
     local_model: str
+    scene_analysis_model: str
     embedding_model: str
     auto_analyze_uploads: bool
     smart_search_enabled: bool
@@ -39,6 +40,7 @@ class AISettingsUpdate(BaseModel):
     external_api_key: str | None = None
     external_model: str | None = None
     local_model: str | None = None
+    scene_analysis_model: str | None = None
     auto_analyze_uploads: bool | None = None
     smart_search_enabled: bool | None = None
     recommendation_reasons: bool | None = None
@@ -87,6 +89,7 @@ def _serialize(ai: AISettings) -> dict:
         "external_api_key_set": bool(ai.external_api_key),
         "external_model": ai.external_model,
         "local_model": ai.local_model,
+        "scene_analysis_model": ai.scene_analysis_model,
         "embedding_model": ai.embedding_model,
         "auto_analyze_uploads": ai.auto_analyze_uploads,
         "smart_search_enabled": ai.smart_search_enabled,
@@ -118,13 +121,14 @@ async def update_settings(
     ai.updated_at = datetime.utcnow()
     await db.commit()
 
-    # If local model changed, tell the AI service to load it
-    if body.local_model is not None:
-        try:
-            async with httpx.AsyncClient(timeout=120) as client:
-                await client.post(_ai_url("/models/load"), json={"model_name": body.local_model})
-        except Exception:
-            logger.warning("Failed to pre-load model %s in AI service", body.local_model)
+    # If a model changed, tell the AI service to pre-load it
+    for changed_model in (body.local_model, body.scene_analysis_model):
+        if changed_model is not None:
+            try:
+                async with httpx.AsyncClient(timeout=120) as client:
+                    await client.post(_ai_url("/models/load"), json={"model_name": changed_model})
+            except Exception:
+                logger.warning("Failed to pre-load model %s in AI service", changed_model)
 
     return _serialize(ai)
 

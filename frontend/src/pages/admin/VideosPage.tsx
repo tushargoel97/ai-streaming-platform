@@ -172,9 +172,14 @@ export default function VideosPage() {
   const [editMinTierLevel, setEditMinTierLevel] = useState(0);
   const [saving, setSaving] = useState(false);
 
-  // Confirm dialog
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [confirmVideo, setConfirmVideo] = useState<Video | null>(null);
+  // Unified action confirm dialog
+  type ActionType = "delete" | "retranscode" | "analyze";
+  const [pendingAction, setPendingAction] = useState<{ video: Video; action: ActionType } | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  // Inline notification toast
+  const [notification, setNotification] = useState<{ msg: string; ok: boolean } | null>(null);
+  const notifyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pageSize = 20;
@@ -329,51 +334,79 @@ export default function VideosPage() {
     }
   };
 
-  // Feature toggle
-  const toggleFeatured = async (video: Video) => {
+  const showNotification = (msg: string, ok: boolean) => {
+    if (notifyTimer.current) clearTimeout(notifyTimer.current);
+    setNotification({ msg, ok });
+    notifyTimer.current = setTimeout(() => setNotification(null), 3500);
+  };
+
+  const handleFeatureToggle = async (video: Video) => {
     try {
       await api.post(`/admin/videos/${video.id}/feature`);
+      showNotification(
+        video.is_featured ? `"${video.title}" unfeatured.` : `"${video.title}" featured.`,
+        true,
+      );
       fetchVideos();
-    } catch {
-      // silent
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      showNotification(detail || `Failed to update "${video.title}".`, false);
     }
   };
 
-  // Retranscode failed video
-  const handleRetranscode = async (video: Video) => {
-    try {
-      await api.post(`/admin/videos/${video.id}/retranscode`);
-      fetchVideos();
-    } catch {
-      // silent
-    }
+  const requestAction = (video: Video, action: "delete" | "retranscode" | "analyze") => {
+    setPendingAction({ video, action });
   };
 
-  // AI scene analysis — pick best preview timestamp
-  const handleAnalyzePreview = async (video: Video) => {
-    try {
-      await api.post(`/admin/videos/${video.id}/analyze-preview`);
-    } catch {
-      // silent — runs in background, no immediate feedback needed
-    }
+  const ACTION_META: Record<ActionType, {
+    title: string;
+    message: (v: Video) => string;
+    confirmLabel: string;
+    variant: "danger" | "default";
+  }> = {
+    delete: {
+      title: "Delete Video",
+      message: (v) => `Delete "${v.title}"? This permanently removes the video and all transcoded files. This cannot be undone.`,
+      confirmLabel: "Delete",
+      variant: "danger",
+    },
+    retranscode: {
+      title: "Retranscode Video",
+      message: (v) => `Re-transcode "${v.title}" to HLS? The existing transcoded files will be replaced.`,
+      confirmLabel: "Retranscode",
+      variant: "default",
+    },
+    analyze: {
+      title: "Analyze Preview Scene",
+      message: (v) => `Run AI scene analysis on "${v.title}" to pick the best preview timestamp? This runs in the background.`,
+      confirmLabel: "Analyze",
+      variant: "default",
+    },
   };
 
-  // Delete
-  const requestDelete = (video: Video) => {
-    setConfirmVideo(video);
-    setConfirmOpen(true);
-  };
-
-  const handleDelete = async () => {
-    if (!confirmVideo) return;
+  const executeAction = async () => {
+    if (!pendingAction) return;
+    const { video, action } = pendingAction;
+    setActionLoading(true);
     try {
-      await api.delete(`/admin/videos/${confirmVideo.id}`);
-      fetchVideos();
-    } catch {
-      // silent
+      if (action === "delete") {
+        await api.delete(`/admin/videos/${video.id}`);
+        showNotification(`"${video.title}" deleted.`, true);
+        fetchVideos();
+      } else if (action === "retranscode") {
+        await api.post(`/admin/videos/${video.id}/retranscode`);
+        showNotification(`Retranscode queued for "${video.title}".`, true);
+        fetchVideos();
+      } else if (action === "analyze") {
+        await api.post(`/admin/videos/${video.id}/analyze-preview`);
+        showNotification(`Scene analysis started for "${video.title}". Preview timestamp will update shortly.`, true);
+      }
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      showNotification(detail || `Action failed for "${video.title}".`, false);
     } finally {
-      setConfirmOpen(false);
-      setConfirmVideo(null);
+      setActionLoading(false);
+      setPendingAction(null);
     }
   };
 
@@ -476,7 +509,7 @@ export default function VideosPage() {
                       <div className="flex items-center justify-end gap-1">
                         {v.status !== "processing" && (
                           <button
-                            onClick={() => handleRetranscode(v)}
+                            onClick={() => requestAction(v, "retranscode")}
                             className={`rounded p-1.5 hover:bg-white/10 ${v.status === "failed" ? "text-red-400 hover:text-red-300" : "text-gray-400 hover:text-blue-400"}`}
                             title={v.status === "failed" ? "Retry Transcode" : "Transcode to HLS"}
                           >
@@ -485,7 +518,7 @@ export default function VideosPage() {
                         )}
                         {v.source_path && (
                           <button
-                            onClick={() => handleAnalyzePreview(v)}
+                            onClick={() => requestAction(v, "analyze")}
                             className={`rounded p-1.5 hover:bg-white/10 hover:text-purple-400 ${v.preview_start_time != null ? "text-purple-400" : "text-gray-400"}`}
                             title={v.preview_start_time != null ? `Re-analyze preview (current: ${v.preview_start_time}s)` : "Analyze preview scene (AI)"}
                           >
@@ -493,7 +526,7 @@ export default function VideosPage() {
                           </button>
                         )}
                         <button
-                          onClick={() => toggleFeatured(v)}
+                          onClick={() => handleFeatureToggle(v)}
                           className="rounded p-1.5 text-gray-400 hover:bg-white/10 hover:text-yellow-400"
                           title={v.is_featured ? "Unfeature" : "Feature"}
                         >
@@ -507,7 +540,7 @@ export default function VideosPage() {
                           <Edit3 size={16} />
                         </button>
                         <button
-                          onClick={() => requestDelete(v)}
+                          onClick={() => requestAction(v, "delete")}
                           className="rounded p-1.5 text-gray-400 hover:bg-white/10 hover:text-red-400"
                           title="Delete"
                         >
@@ -936,14 +969,36 @@ export default function VideosPage() {
         </div>
       )}
 
-      <ConfirmDialog
-        open={confirmOpen}
-        title="Delete Video"
-        message={`Delete "${confirmVideo?.title}"? This cannot be undone.`}
-        confirmLabel="Delete"
-        onConfirm={handleDelete}
-        onCancel={() => { setConfirmOpen(false); setConfirmVideo(null); }}
-      />
+      {/* ── Notification toast ── */}
+      {notification && (
+        <div
+          className={`fixed bottom-6 right-6 z-[300] flex items-center gap-2 rounded-lg border px-4 py-3 text-sm shadow-xl transition-all ${
+            notification.ok
+              ? "border-green-500/30 bg-green-500/10 text-green-400"
+              : "border-red-500/30 bg-red-500/10 text-red-400"
+          }`}
+        >
+          {notification.ok ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+          {notification.msg}
+        </div>
+      )}
+
+      {/* ── Unified confirm dialog ── */}
+      {pendingAction && (() => {
+        const { video, action } = pendingAction;
+        const meta = ACTION_META[action];
+        return (
+          <ConfirmDialog
+            open
+            title={meta.title}
+            message={meta.message(video)}
+            confirmLabel={actionLoading ? "Working…" : meta.confirmLabel}
+            variant={meta.variant}
+            onConfirm={executeAction}
+            onCancel={() => setPendingAction(null)}
+          />
+        );
+      })()}
     </div>
   );
 }

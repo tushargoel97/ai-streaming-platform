@@ -26,14 +26,21 @@ class ApiClient {
     return res.json();
   }
 
-  async post<T>(path: string, body?: unknown): Promise<T> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      method: "POST",
-      headers: this.getHeaders(),
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    if (!res.ok) throw new ApiError(res.status, await res.text());
-    return res.json();
+  async post<T>(path: string, body?: unknown, timeoutMs = 12000): Promise<T> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${this.baseUrl}${path}`, {
+        method: "POST",
+        headers: this.getHeaders(),
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new ApiError(res.status, await res.text());
+      return res.json();
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async patch<T>(path: string, body: unknown): Promise<T> {

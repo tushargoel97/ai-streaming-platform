@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import re
 from collections.abc import Callable
 
@@ -18,6 +19,32 @@ QUALITY_PROFILES = {
     "1440p": (2560, 1440, 9000, 192),
     "2160p": (3840, 2160, 18000, 256),
 }
+
+_hwaccel_cache: str | None = None
+
+
+def detect_hwaccel() -> str:
+    """Return best available hardware encoder: nvenc | vaapi | none. Cached."""
+    global _hwaccel_cache
+    if _hwaccel_cache is not None:
+        return _hwaccel_cache
+
+    requested = settings.ffmpeg_hwaccel.lower()
+    if requested != "auto":
+        _hwaccel_cache = requested
+        logger.info("FFmpeg hwaccel: %s (configured)", _hwaccel_cache)
+        return _hwaccel_cache
+
+    # Auto-detect
+    if os.path.exists("/dev/nvidia0"):
+        _hwaccel_cache = "nvenc"
+    elif os.path.exists("/dev/dri/renderD128"):
+        _hwaccel_cache = "vaapi"
+    else:
+        _hwaccel_cache = "none"
+
+    logger.info("FFmpeg hwaccel auto-detected: %s", _hwaccel_cache)
+    return _hwaccel_cache
 
 
 def select_qualities(source_height: int) -> list[str]:
@@ -42,48 +69,48 @@ def build_transcode_command(
     segment_duration: int | None = None,
     segment_type: str | None = None,
 ) -> list[str]:
-    """Build a single FFmpeg command that produces multi-bitrate HLS using split filter.
-
-    Uses -filter_complex split to read the source once and output all variants.
-    Produces fMP4/CMAF segments with H.264 High profile.
-    """
+    """Build a multi-bitrate HLS FFmpeg command using filter_complex split."""
     seg_dur = segment_duration or settings.transcode_segment_duration
     seg_type = segment_type or settings.hls_segment_type
 
     n = len(qualities)
+    hwaccel = detect_hwaccel()
 
-    # Build filter_complex: split input into N streams, scale each
     split_labels = " ".join(f"[v{i}]" for i in range(n))
     filter_parts = [f"[0:v]split={n}{split_labels}"]
     for i, q_name in enumerate(qualities):
         w, h, _, _ = QUALITY_PROFILES[q_name]
-        # scale to target keeping aspect ratio, ensure even dimensions
-        filter_parts.append(
+        scale = (
             f"[v{i}]scale={w}:{h}:force_original_aspect_ratio=decrease,"
-            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2[out{i}]"
+            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2"
         )
+        if hwaccel == "vaapi":
+            filter_parts.append(f"{scale},format=nv12,hwupload[out{i}]")
+        else:
+            filter_parts.append(f"{scale}[out{i}]")
 
     filter_complex = "; ".join(filter_parts)
 
-    cmd = [
-        settings.ffmpeg_path,
-        "-y",
-        "-i", input_path,
-        "-filter_complex", filter_complex,
-    ]
+    cmd = [settings.ffmpeg_path, "-y"]
 
-    # Map all streams first (all video, then pair with audio)
+    if hwaccel == "vaapi":
+        cmd.extend(["-vaapi_device", "/dev/dri/renderD128"])
+
+    cmd.extend(["-i", input_path, "-filter_complex", filter_complex])
+
+    if hwaccel == "none" and settings.transcode_threads > 0:
+        cmd.extend(["-threads", str(settings.transcode_threads)])
+
     for i in range(n):
         cmd.extend(["-map", f"[out{i}]"])
         cmd.extend(["-map", "0:a?"])
 
-    # Per-stream video encoding options
-    # H.264 levels: 4.1 supports up to 1080p, 5.1 supports up to 2160p (4K)
     for i, q_name in enumerate(qualities):
         _, h, v_bitrate, _ = QUALITY_PROFILES[q_name]
         level = "5.1" if h > 1080 else "4.1"
+        encoder = {"nvenc": "h264_nvenc", "vaapi": "h264_vaapi"}.get(hwaccel, "libx264")
         cmd.extend([
-            f"-c:v:{i}", "libx264",
+            f"-c:v:{i}", encoder,
             f"-b:v:{i}", f"{v_bitrate}k",
             f"-maxrate:v:{i}", f"{int(v_bitrate * 1.2)}k",
             f"-bufsize:v:{i}", f"{v_bitrate * 2}k",
@@ -91,22 +118,24 @@ def build_transcode_command(
             f"-level:v:{i}", level,
         ])
 
-    # Global video encoding options
+    if hwaccel == "nvenc":
+        cmd.extend(["-pix_fmt", "yuv420p", "-preset", "p4", "-rc:v", "vbr", "-cq:v", "19"])
+    elif hwaccel == "vaapi":
+        cmd.extend(["-rc_mode", "VBR", "-quality", "4"])
+    else:
+        cmd.extend(["-pix_fmt", "yuv420p", "-preset", settings.transcode_preset])
+
     cmd.extend([
-        "-pix_fmt", "yuv420p",
-        "-preset", "slow",
         "-sc_threshold", "0",
         "-g", str(seg_dur * 24),
         "-keyint_min", str(seg_dur * 24),
     ])
 
-    # Audio encoding (AAC, per-stream bitrate from quality profiles)
     cmd.extend(["-c:a", "aac", "-ac", "2"])
     for i, q_name in enumerate(qualities):
         _, _, _, a_bitrate = QUALITY_PROFILES[q_name]
         cmd.extend([f"-b:a:{i}", f"{a_bitrate}k"])
 
-    # HLS output settings — use var_stream_map for multi-bitrate
     stream_map = " ".join(f"v:{i},a:{i}" for i in range(n))
 
     hls_flags = "independent_segments"
@@ -126,6 +155,7 @@ def build_transcode_command(
         f"{output_dir}/%v/playlist.m3u8",
     ])
 
+    logger.info("Transcode hwaccel=%s qualities=%s", hwaccel, qualities)
     return cmd
 
 

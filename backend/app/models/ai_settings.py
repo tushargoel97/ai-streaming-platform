@@ -23,6 +23,7 @@ class AISettings(Base):
 
     # Local LLM
     local_model: Mapped[str] = mapped_column(String(100), default="qwen2.5-3b")
+    scene_analysis_model: Mapped[str] = mapped_column(String(100), default="qwen2.5-vl-7b")
 
     # Embedding
     embedding_model: Mapped[str] = mapped_column(String(100), default="all-MiniLM-L6-v2")

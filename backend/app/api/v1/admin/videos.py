@@ -1,11 +1,10 @@
-import asyncio
 import os
 import re
 import uuid
 from datetime import datetime
 
 import aiofiles
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -128,7 +127,7 @@ async def upload_video(
     # Reload with relationships
     await db.refresh(video, ["categories", "tenant_videos"])
 
-    await start_transcode(video_id)
+    start_transcode(video_id)
 
     return VideoResponse.from_video(video)
 
@@ -268,11 +267,14 @@ async def delete_video(
 @router.post("/{video_id}/retranscode", response_model=VideoResponse)
 async def retranscode_video(
     video_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_admin),
 ):
     """Retry transcoding for a failed video."""
-    result = await db.execute(select(Video).where(Video.id == video_id))
+    result = await db.execute(
+        select(Video).options(selectinload(Video.categories), selectinload(Video.tenant_videos)).where(Video.id == video_id)
+    )
     video = result.scalar_one_or_none()
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
@@ -282,35 +284,36 @@ async def retranscode_video(
     video.status = "processing"
     video.updated_at = datetime.utcnow()
     await db.commit()
+    await db.refresh(video, ["categories", "tenant_videos"])
 
-    await start_transcode(video_id)
+    background_tasks.add_task(start_transcode, video_id)
 
-    return video
+    return VideoResponse.from_video(video)
 
 
 @router.post("/{video_id}/analyze-preview", response_model=VideoResponse)
 async def analyze_preview(
     video_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_admin),
 ):
     """Run AI scene analysis to set the optimal preview_start_time for a video."""
-    result = await db.execute(select(Video).where(Video.id == video_id))
+    result = await db.execute(
+        select(Video).options(selectinload(Video.categories), selectinload(Video.tenant_videos)).where(Video.id == video_id)
+    )
     video = result.scalar_one_or_none()
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
     if not video.source_path:
         raise HTTPException(status_code=400, detail="Video has no source file")
 
-    asyncio.create_task(_run_scene_analysis_bg(video_id))
-    return video
+    def _enqueue():
+        from app.worker.tasks import analyze_scene
+        analyze_scene.apply_async((str(video_id),), retry=False)
 
-
-async def _run_scene_analysis_bg(video_id: uuid.UUID) -> None:
-    from app.database import async_session
-    from app.services.scene_analysis import run_scene_analysis
-    async with async_session() as db:
-        await run_scene_analysis(video_id, db)
+    background_tasks.add_task(_enqueue)
+    return VideoResponse.from_video(video)
 
 
 @router.post("/{video_id}/feature", response_model=VideoResponse)
@@ -320,11 +323,15 @@ async def toggle_featured(
     user: User = Depends(require_admin),
 ):
     """Toggle the featured flag on a video."""
-    result = await db.execute(select(Video).where(Video.id == video_id))
+    result = await db.execute(
+        select(Video).options(selectinload(Video.categories), selectinload(Video.tenant_videos)).where(Video.id == video_id)
+    )
     video = result.scalar_one_or_none()
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
 
     video.is_featured = not video.is_featured
     video.updated_at = datetime.utcnow()
-    return video
+    await db.commit()
+    await db.refresh(video, ["categories", "tenant_videos"])
+    return VideoResponse.from_video(video)

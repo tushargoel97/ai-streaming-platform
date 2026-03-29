@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     ffprobe_path: str = "ffprobe"
     transcode_segment_duration: int = 4
     hls_segment_type: str = "fmp4"
+    transcode_preset: str = "veryfast"
+    transcode_threads: int = 0
+    ffmpeg_hwaccel: str = "auto"
+
+    # Worker
+    worker_concurrency: int = 2  # parallel Celery worker processes
 
     # Live Streaming
     rtmp_port: int = 1935

@@ -81,11 +81,16 @@ class PreviewTimestampRequest(BaseModel):
     tags: list[str] = []
     duration_seconds: float
     candidates: list[SceneCandidate]
+    # Optional base64 JPEG frames at each candidate timestamp (same order as candidates)
+    frames_b64: list[str] = []
+    # Vision model to use for frame analysis; falls back to text LLM if not set/not vision
+    scene_analysis_model: str | None = None
     llm_config: LLMConfig | None = None
 
 
 class PreviewTimestampResponse(BaseModel):
     preview_start_time: float
+    method: str = "text"  # "vision" | "text" | "heuristic"
 
 
 @router.post("/analyze", response_model=AnalyzeResponse)
@@ -127,18 +132,69 @@ Rules:
 Return valid JSON only: {"index": <0-based index into candidates array>}"""
 
 
+_PREVIEW_VISION_SYSTEM = """You are a film editor for a streaming platform selecting the best preview moment.
+You will be shown frames extracted from a video at candidate scene-change timestamps.
+Pick the frame that would make the most compelling 30-second preview clip.
+
+Criteria:
+- Most visually striking or emotionally compelling composition
+- Avoid dark/blurry frames, title cards, or static shots
+- Prefer action, drama, or visually stunning scenes
+
+Return valid JSON only: {"best_frame_index": <1-based index of the best frame>}"""
+
+
 @router.post("/preview-timestamp", response_model=PreviewTimestampResponse)
 async def select_preview_timestamp(body: PreviewTimestampRequest):
-    """Use the local LLM to pick the best preview start timestamp from FFmpeg scene candidates."""
+    """Pick the best preview timestamp using vision (frames) or text LLM (metadata)."""
     if not body.candidates:
-        # No candidates — default to 25% through the video
-        return PreviewTimestampResponse(preview_start_time=round(body.duration_seconds * 0.25, 1))
+        return PreviewTimestampResponse(
+            preview_start_time=round(body.duration_seconds * 0.25, 1),
+            method="heuristic",
+        )
 
-    # Format candidate list for the LLM
+    # ── Vision path: use actual extracted frames ──
+    if body.frames_b64 and body.scene_analysis_model:
+        from app.services.local_llm_service import MODEL_CATALOG, chat_vision_json
+
+        if MODEL_CATALOG.get(body.scene_analysis_model, {}).get("vision"):
+            try:
+                frames = body.frames_b64[: len(body.candidates)]
+                n = len(frames)
+                prompt = (
+                    f'Video: "{body.title}"\n'
+                    f"Tags: {', '.join(body.tags) or '(none)'}\n"
+                    f"I am showing you {n} frames from candidate scene-change timestamps:\n"
+                    + "\n".join(
+                        f"Frame {i+1}: {body.candidates[i].timestamp:.1f}s "
+                        f"({body.candidates[i].timestamp / body.duration_seconds * 100:.0f}% into the video)"
+                        for i in range(n)
+                    )
+                    + '\n\nReturn JSON: {"best_frame_index": <1-based index>}'
+                )
+                result = await chat_vision_json(
+                    _PREVIEW_VISION_SYSTEM,
+                    prompt,
+                    frames,
+                    model_name=body.scene_analysis_model,
+                    max_tokens=64,
+                )
+                idx = int(result.get("best_frame_index", 1)) - 1
+                idx = max(0, min(idx, n - 1))
+                chosen = body.candidates[idx].timestamp
+                logger.info(
+                    "Vision model chose frame %d (%.1fs) for '%s'",
+                    idx + 1, chosen, body.title,
+                )
+                return PreviewTimestampResponse(preview_start_time=round(chosen, 1), method="vision")
+            except Exception:
+                logger.warning("Vision model failed for preview-timestamp, falling back to text LLM")
+
+    # ── Text LLM path: reason from metadata ──
     duration_min = int(body.duration_seconds // 60)
     duration_sec = int(body.duration_seconds % 60)
     candidate_lines = "\n".join(
-        f"{i}. {c.timestamp:.1f}s ({c.timestamp/body.duration_seconds*100:.0f}% in, scene score: {c.score:.2f})"
+        f"{i}. {c.timestamp:.1f}s ({c.timestamp/body.duration_seconds*100:.0f}% in, score: {c.score:.2f})"
         for i, c in enumerate(body.candidates)
     )
     prompt = (
@@ -147,7 +203,7 @@ async def select_preview_timestamp(body: PreviewTimestampRequest):
         f"Tags: {', '.join(body.tags) or '(none)'}\n"
         f"Duration: {duration_min}m {duration_sec}s\n\n"
         f"Candidate timestamps:\n{candidate_lines}\n\n"
-        f'Return JSON: {{"index": <chosen index>}}'
+        f'Return JSON: {{"index": <chosen 0-based index>}}'
     )
 
     try:
@@ -157,11 +213,11 @@ async def select_preview_timestamp(body: PreviewTimestampRequest):
         idx = int(result.get("index", 0))
         idx = max(0, min(idx, len(body.candidates) - 1))
         chosen = body.candidates[idx].timestamp
+        return PreviewTimestampResponse(preview_start_time=round(chosen, 1), method="text")
     except Exception:
         logger.warning("Preview timestamp LLM failed, using highest scene-score candidate")
         chosen = max(body.candidates, key=lambda c: c.score).timestamp
-
-    return PreviewTimestampResponse(preview_start_time=round(chosen, 1))
+        return PreviewTimestampResponse(preview_start_time=round(chosen, 1), method="heuristic")
 
 
 @router.post("/recommend-reasons", response_model=RecommendReasonResponse)

@@ -2,11 +2,14 @@
 
 Pipeline:
 1. FFmpeg scene-change detection → candidate timestamps between 15%–85% of duration
-2. AI service (local LLM) → reasons about metadata to pick the most iconic moment
-3. Fallback: highest scene-score candidate if LLM is unavailable
+2. Extract JPEG frames at top candidates (for vision model)
+3. AI service: vision model (if configured) → reasons over actual frames
+   Fallback: text LLM → reasons over metadata
+4. Fallback: highest scene-score candidate if AI is unavailable
 """
 
 import asyncio
+import base64
 import logging
 import re
 import uuid
@@ -16,12 +19,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.models.ai_settings import AISettings
 from app.models.video import Video
 
 logger = logging.getLogger(__name__)
 
-# How long to spend on scene detection (cap for very long videos)
-_MAX_PROBE_SECONDS = 600
+# Max frames to extract and send to the vision model
+_MAX_VISION_FRAMES = 5
 
 
 async def _detect_scene_candidates(
@@ -37,6 +41,7 @@ async def _detect_scene_candidates(
     cmd = [
         settings.ffmpeg_path,
         "-y",
+        "-threads", "2",
         "-i", video_path,
         "-vf", "select='gt(scene,0.20)',showinfo",
         "-vsync", "vfr",
@@ -59,7 +64,6 @@ async def _detect_scene_candidates(
         stderr = stderr_bytes.decode(errors="replace")
 
         candidates = []
-        # Parse lines like: [Parsed_showinfo_1 @ ...] n:5 pts:... pts_time:44.1234 ...
         for line in stderr.split("\n"):
             if "pts_time:" not in line:
                 continue
@@ -69,7 +73,6 @@ async def _detect_scene_candidates(
             ts = float(ts_match.group(1))
             if not (low <= ts <= high):
                 continue
-            # scene score comes from "scene_score:" if available; default to 0.5
             score_match = re.search(r"scene_score:(\d+\.?\d*)", line)
             score = float(score_match.group(1)) if score_match else 0.5
             candidates.append({"timestamp": round(ts, 1), "score": round(score, 3)})
@@ -92,8 +95,86 @@ async def _detect_scene_candidates(
         return []
 
 
-async def _ask_ai_for_timestamp(video: Video, candidates: list[dict]) -> float | None:
-    """Call the AI service to pick the best timestamp using the local LLM."""
+async def _extract_frame_b64(video_path: str, timestamp: float) -> str | None:
+    """Extract a single JPEG frame at the given timestamp, return as base64."""
+    cmd = [
+        settings.ffmpeg_path,
+        "-y",
+        "-threads", "1",
+        "-ss", str(timestamp),
+        "-i", video_path,
+        "-vframes", "1",
+        "-vf", "scale=640:-1",
+        "-q:v", "5",
+        "-f", "image2pipe",
+        "-vcodec", "mjpeg",
+        "pipe:1",
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+        if stdout:
+            return base64.b64encode(stdout).decode()
+    except Exception:
+        logger.warning("Failed to extract frame at %.1fs from %s", timestamp, video_path)
+    return None
+
+
+async def _extract_frames_for_candidates(
+    video_path: str, candidates: list[dict], max_frames: int = _MAX_VISION_FRAMES
+) -> tuple[list[str], list[dict]]:
+    """Extract JPEG frames for a spread of candidates.
+
+    Returns (frames_b64, matching_candidates) — only pairs where extraction succeeded.
+    """
+    if not candidates:
+        return [], []
+
+    # Pick evenly-spaced subset if we have more candidates than max_frames
+    if len(candidates) > max_frames:
+        step = len(candidates) / max_frames
+        indices = [int(i * step) for i in range(max_frames)]
+        selected = [candidates[i] for i in indices]
+    else:
+        selected = candidates
+
+    raw_frames = await asyncio.gather(
+        *[_extract_frame_b64(video_path, c["timestamp"]) for c in selected]
+    )
+
+    frames_out: list[str] = []
+    cands_out: list[dict] = []
+    for frame, cand in zip(raw_frames, selected):
+        if frame:
+            frames_out.append(frame)
+            cands_out.append(cand)
+
+    return frames_out, cands_out
+
+
+async def _get_scene_analysis_model(db: AsyncSession) -> str | None:
+    """Read the scene_analysis_model from admin AI settings."""
+    try:
+        row = await db.execute(select(AISettings))
+        ai = row.scalar_one_or_none()
+        if ai:
+            return ai.scene_analysis_model or None
+    except Exception:
+        logger.warning("Could not read AI settings for scene analysis model")
+    return None
+
+
+async def _ask_ai_for_timestamp(
+    video: Video,
+    candidates: list[dict],
+    frames_b64: list[str] | None = None,
+    scene_analysis_model: str | None = None,
+) -> float | None:
+    """Call the AI service to pick the best timestamp."""
     url = f"{settings.ai_service_url}/content/preview-timestamp"
     payload = {
         "title": video.title,
@@ -102,11 +183,20 @@ async def _ask_ai_for_timestamp(video: Video, candidates: list[dict]) -> float |
         "duration_seconds": float(video.duration),
         "candidates": candidates,
     }
+    if frames_b64:
+        payload["frames_b64"] = frames_b64
+    if scene_analysis_model:
+        payload["scene_analysis_model"] = scene_analysis_model
+
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(url, json=payload)
             resp.raise_for_status()
-            return float(resp.json()["preview_start_time"])
+            data = resp.json()
+            method = data.get("method", "?")
+            ts = float(data["preview_start_time"])
+            logger.info("AI service chose %.1fs via %s for '%s'", ts, method, video.title)
+            return ts
     except Exception:
         logger.warning("AI service preview-timestamp call failed, using heuristic fallback")
         return None
@@ -119,16 +209,39 @@ def _heuristic_fallback(candidates: list[dict], duration: float) -> float:
     return round(duration * 0.30, 1)
 
 
-async def compute_preview_timestamp(video_path: str, video: Video) -> float:
-    """Full pipeline: FFmpeg scene detection → local LLM → heuristic fallback."""
+async def compute_preview_timestamp(
+    video_path: str,
+    video: Video,
+    scene_analysis_model: str | None = None,
+) -> float:
+    """Full pipeline: FFmpeg scene detection → frame extraction → AI → heuristic fallback."""
     candidates = await _detect_scene_candidates(video_path, float(video.duration))
 
-    # Try local LLM
-    result = await _ask_ai_for_timestamp(video, candidates)
+    frames_b64: list[str] = []
+    vision_candidates = candidates  # may be subset after frame extraction
+
+    # Extract frames if a vision model is configured
+    if scene_analysis_model and candidates:
+        extracted_frames, vision_candidates = await _extract_frames_for_candidates(
+            video_path, candidates
+        )
+        if extracted_frames:
+            frames_b64 = extracted_frames
+            logger.info(
+                "Extracted %d frames for vision model %s",
+                len(frames_b64), scene_analysis_model,
+            )
+
+    # Ask AI service (will use vision if frames provided, text LLM otherwise)
+    result = await _ask_ai_for_timestamp(
+        video,
+        vision_candidates if frames_b64 else candidates,
+        frames_b64=frames_b64 or None,
+        scene_analysis_model=scene_analysis_model,
+    )
     if result is not None:
         return result
 
-    # LLM unavailable — use heuristic
     return _heuristic_fallback(candidates, float(video.duration))
 
 
@@ -142,12 +255,18 @@ async def run_scene_analysis(video_id: uuid.UUID, db: AsyncSession) -> float | N
 
     video_path = f"{settings.local_media_path}/{video.source_path}"
 
-    logger.info("Running scene analysis for video %s at %s", video_id, video_path)
+    # Load the configured scene analysis model from DB
+    scene_analysis_model = await _get_scene_analysis_model(db)
+
+    logger.info(
+        "Running scene analysis for video %s (model=%s) at %s",
+        video_id, scene_analysis_model, video_path,
+    )
     try:
-        ts = await compute_preview_timestamp(video_path, video)
+        ts = await compute_preview_timestamp(video_path, video, scene_analysis_model)
         video.preview_start_time = ts
         await db.commit()
-        logger.info("preview_start_time=%ss set for video %s", ts, video_id)
+        logger.info("preview_start_time=%.1fs set for video %s", ts, video_id)
         return ts
     except Exception:
         logger.exception("Scene analysis failed for video %s", video_id)

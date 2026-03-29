@@ -5,12 +5,14 @@ import {
   Trash2,
   Loader2,
   Check,
-  X,
   RefreshCw,
   Cpu,
   Cloud,
   Play,
   AlertCircle,
+  Eye,
+  ScanSearch,
+  MessageSquare,
 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "/api/v1";
@@ -21,6 +23,7 @@ interface AIConfig {
   external_api_key_set: boolean;
   external_model: string;
   local_model: string;
+  scene_analysis_model: string;
   embedding_model: string;
   auto_analyze_uploads: boolean;
   smart_search_enabled: boolean;
@@ -33,6 +36,7 @@ interface ModelEntry {
   size_mb: number;
   downloaded: boolean;
   active: boolean;
+  vision?: boolean;
   file_size_mb?: number;
   context_length?: number;
 }
@@ -267,21 +271,56 @@ export default function AISettingsPage() {
             </button>
           </div>
 
-          {/* Local model selector */}
-          <div>
-            <label className="text-sm text-gray-400 block mb-1.5">Local Model</label>
-            <select
-              value={config.local_model}
-              onChange={(e) => updateConfig({ local_model: e.target.value })}
-              className="w-full rounded-lg border border-[var(--border)] bg-[#0a0a0a] px-3 py-2 text-sm text-white"
-            >
-              {models.map((m) => (
-                <option key={m.name} value={m.name} disabled={!m.downloaded}>
-                  {m.name} {m.downloaded ? (m.active ? "(active)" : "") : "(not downloaded)"}
-                </option>
-              ))}
-              {models.length === 0 && <option value={config.local_model}>{config.local_model}</option>}
-            </select>
+          {/* Per-task model selectors */}
+          <div className="space-y-3">
+            <p className="text-xs text-gray-500 uppercase tracking-wider">Per-Task Models</p>
+
+            {/* Text / reasoning tasks */}
+            <div>
+              <label className="text-sm text-gray-400 flex items-center gap-1.5 mb-1.5">
+                <MessageSquare size={13} /> Content Analysis &amp; Search (text)
+              </label>
+              <select
+                value={config.local_model}
+                onChange={(e) => updateConfig({ local_model: e.target.value })}
+                className="w-full rounded-lg border border-[var(--border)] bg-[#0a0a0a] px-3 py-2 text-sm text-white"
+              >
+                {models.filter((m) => !m.vision).map((m) => (
+                  <option key={m.name} value={m.name} disabled={!m.downloaded}>
+                    {m.name} {m.downloaded ? (m.active ? "(active)" : "") : "(not downloaded)"}
+                  </option>
+                ))}
+                {models.filter((m) => !m.vision).length === 0 && (
+                  <option value={config.local_model}>{config.local_model}</option>
+                )}
+              </select>
+            </div>
+
+            {/* Vision / scene analysis */}
+            <div>
+              <label className="text-sm text-gray-400 flex items-center gap-1.5 mb-1.5">
+                <ScanSearch size={13} /> Scene Analysis — preview frame selection (vision)
+              </label>
+              <select
+                value={config.scene_analysis_model}
+                onChange={(e) => updateConfig({ scene_analysis_model: e.target.value })}
+                className="w-full rounded-lg border border-[var(--border)] bg-[#0a0a0a] px-3 py-2 text-sm text-white"
+              >
+                {models.map((m) => (
+                  <option key={m.name} value={m.name} disabled={!m.downloaded}>
+                    {m.name}
+                    {m.vision ? " [vision]" : " [text-only]"}
+                    {!m.downloaded ? " (not downloaded)" : m.active ? " (active)" : ""}
+                  </option>
+                ))}
+                {models.length === 0 && (
+                  <option value={config.scene_analysis_model}>{config.scene_analysis_model}</option>
+                )}
+              </select>
+              <p className="text-xs text-gray-600 mt-1">
+                Vision models analyze actual video frames. Text-only models use metadata heuristics.
+              </p>
+            </div>
           </div>
 
           {/* External provider config (always visible for fallback) */}
@@ -401,7 +440,7 @@ export default function AISettingsPage() {
           Local LLM Models
         </h2>
         <p className="text-xs text-gray-500 mb-4">
-          Download and manage GGUF models. They run entirely on CPU inside the AI container — no API keys or GPU needed.
+          Download and manage GGUF models. Text models run on CPU, vision models require additional mmproj files. All run locally — no API keys or GPU needed.
         </p>
 
         <div className="space-y-3">
@@ -415,8 +454,13 @@ export default function AISettingsPage() {
               }`}
             >
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-sm font-medium text-white">{m.name}</span>
+                  {m.vision && (
+                    <span className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 font-medium">
+                      <Eye size={10} /> VISION
+                    </span>
+                  )}
                   {m.active && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 font-medium">
                       ACTIVE
@@ -434,6 +478,7 @@ export default function AISettingsPage() {
                     ? `${m.file_size_mb.toLocaleString()} MB on disk`
                     : `~${(m.size_mb / 1024).toFixed(1)} GB`}
                   {m.context_length ? ` · ${m.context_length.toLocaleString()} ctx` : ""}
+                  {m.vision ? " · requires mmproj" : ""}
                 </p>
               </div>
 

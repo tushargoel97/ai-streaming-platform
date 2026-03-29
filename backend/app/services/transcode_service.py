@@ -42,9 +42,11 @@ async def _publish_progress(video_id: uuid.UUID, percent: float, stage: str) -> 
         await r.aclose()
 
 
-async def start_transcode(video_id: uuid.UUID) -> None:
-    """Launch transcoding as a background asyncio task."""
-    asyncio.create_task(_transcode_pipeline(video_id))
+def start_transcode(video_id: uuid.UUID) -> None:
+    """Enqueue a transcode job on the Celery worker."""
+    from app.worker.tasks import transcode_video
+
+    transcode_video.apply_async((str(video_id),), retry=False)
 
 
 async def _transcode_pipeline(video_id: uuid.UUID) -> None:
@@ -271,17 +273,23 @@ async def _transcode_pipeline(video_id: uuid.UUID) -> None:
             # 9c. AI scene analysis — pick best preview start timestamp
             await _publish_progress(video_id, 96, "scene_analysis")
             try:
+                from app.models.ai_settings import AISettings
                 from app.services.scene_analysis import compute_preview_timestamp
+                from sqlalchemy import select as sa_select
+
                 if video.source_path:
-                    video_path = f"{settings.local_media_path}/{video.source_path}"
-                    ts = await compute_preview_timestamp(video_path, video)
+                    video_path_local = f"{settings.local_media_path}/{video.source_path}"
+                    ai_row = await db.execute(sa_select(AISettings))
+                    ai_settings = ai_row.scalar_one_or_none()
+                    scene_model = ai_settings.scene_analysis_model if ai_settings else None
+                    ts = await compute_preview_timestamp(video_path_local, video, scene_model)
                     video.preview_start_time = ts
-                    logger.info("preview_start_time=%ss for video %s", ts, video_id)
+                    logger.info("preview_start_time=%.1fs for video %s", ts, video_id)
             except Exception:
                 logger.warning("Scene analysis failed for video %s", video_id, exc_info=True)
 
             # 10. Mark video as ready
-            await _publish_progress(video_id, 95, "finalizing")
+            await _publish_progress(video_id, 97, "finalizing")
             video.status = "ready"
             video.published_at = datetime.utcnow()
 
