@@ -1,7 +1,10 @@
+import json
 import os
 import re
 import uuid
 from datetime import datetime
+
+import redis.asyncio as aioredis
 
 import aiofiles
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
@@ -278,8 +281,6 @@ async def retranscode_video(
     video = result.scalar_one_or_none()
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
-    if video.status == "processing":
-        raise HTTPException(status_code=400, detail="Video is already being transcoded")
 
     video.status = "processing"
     video.updated_at = datetime.utcnow()
@@ -307,6 +308,17 @@ async def analyze_preview(
         raise HTTPException(status_code=404, detail="Video not found")
     if not video.source_path:
         raise HTTPException(status_code=400, detail="Video has no source file")
+
+    # Overwrite any stale "completed" key so the SSE client doesn't fire onComplete immediately
+    r = aioredis.from_url(settings.redis_url)
+    try:
+        await r.set(
+            f"analyze:progress:{video_id}",
+            json.dumps({"percent": 0, "stage": "queued"}),
+            ex=3600,
+        )
+    finally:
+        await r.aclose()
 
     def _enqueue():
         from app.worker.tasks import analyze_scene

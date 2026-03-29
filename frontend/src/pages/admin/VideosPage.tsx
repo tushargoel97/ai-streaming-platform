@@ -40,17 +40,28 @@ function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 }
 
-function TranscodeProgress({ videoId, onComplete }: { videoId: string; onComplete: () => void }) {
+function TranscodeProgress({
+  videoId,
+  onComplete,
+  onStageChange,
+}: {
+  videoId: string;
+  onComplete: () => void;
+  onStageChange?: (stage: string) => void;
+}) {
   const [progress, setProgress] = useState<{ percent: number; stage: string }>({ percent: 0, stage: "queued" });
+
+  // Use refs so callbacks never appear in effect deps — prevents SSE reconnect on every progress update
+  const onCompleteRef = useRef(onComplete);
+  const onStageChangeRef = useRef(onStageChange);
+  onCompleteRef.current = onComplete;
+  onStageChangeRef.current = onStageChange;
 
   useEffect(() => {
     const token = localStorage.getItem("access_token");
     const url = `${API_URL}/admin/transcode/${videoId}/status`;
-
-    const eventSource = new EventSource(url);
-
-    // EventSource doesn't support auth headers natively, so we use fetch-based SSE
     let cancelled = false;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
     async function connectSSE() {
       try {
@@ -59,7 +70,7 @@ function TranscodeProgress({ videoId, onComplete }: { videoId: string; onComplet
         });
         if (!response.ok || !response.body) return;
 
-        const reader = response.body.getReader();
+        reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
 
@@ -76,9 +87,10 @@ function TranscodeProgress({ videoId, onComplete }: { videoId: string; onComplet
               try {
                 const data = JSON.parse(line.slice(6));
                 setProgress(data);
+                onStageChangeRef.current?.(data.stage);
                 if (data.percent >= 100 || data.stage === "failed") {
                   cancelled = true;
-                  onComplete();
+                  onCompleteRef.current();
                   return;
                 }
               } catch {
@@ -92,15 +104,13 @@ function TranscodeProgress({ videoId, onComplete }: { videoId: string; onComplet
       }
     }
 
-    // Close native EventSource (not used, we use fetch-based)
-    eventSource.close();
     connectSSE();
 
     return () => {
       cancelled = true;
-      eventSource.close();
+      reader?.cancel().catch(() => {});
     };
-  }, [videoId, onComplete]);
+  }, [videoId]); // only reconnect when videoId changes, not on every callback update
 
   const stageLabels: Record<string, string> = {
     queued: "Queued",
@@ -110,6 +120,9 @@ function TranscodeProgress({ videoId, onComplete }: { videoId: string; onComplet
     transcoding: "Transcoding",
     uploading: "Saving files",
     thumbnails: "Thumbnails",
+    embedding: "Embedding",
+    enriching: "Enriching",
+    scene_analysis: "Preview scan",
     finalizing: "Finalizing",
     completed: "Complete",
     failed: "Failed",
@@ -127,6 +140,88 @@ function TranscodeProgress({ videoId, onComplete }: { videoId: string; onComplet
       <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
         <div
           className="h-full rounded-full bg-yellow-400 transition-all duration-500"
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SceneAnalysisProgress({ videoId, onComplete }: { videoId: string; onComplete: () => void }) {
+  const [progress, setProgress] = useState<{ percent: number; stage: string }>({ percent: 0, stage: "queued" });
+
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
+
+  useEffect(() => {
+    const token = localStorage.getItem("access_token");
+    const url = `${API_URL}/admin/transcode/analyze/${videoId}/status`;
+    let cancelled = false;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+
+    async function connectSSE() {
+      try {
+        const response = await fetch(url, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!response.ok || !response.body) return;
+
+        reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (!cancelled) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                setProgress(data);
+                if (data.percent >= 100 || data.stage === "failed") {
+                  cancelled = true;
+                  onCompleteRef.current();
+                  return;
+                }
+              } catch { /* ignore parse errors */ }
+            }
+          }
+        }
+      } catch { /* connection lost */ }
+    }
+
+    connectSSE();
+    return () => {
+      cancelled = true;
+      reader?.cancel().catch(() => {});
+    };
+  }, [videoId]); // only reconnect when videoId changes
+
+  const stageLabels: Record<string, string> = {
+    queued: "Queued",
+    detecting: "Detecting scenes",
+    extracting: "Extracting frames",
+    asking_ai: "AI analysis",
+    finalizing: "Finalizing",
+    completed: "Complete",
+    failed: "Failed",
+  };
+
+  const percent = Math.max(0, progress.percent);
+  const label = stageLabels[progress.stage] || progress.stage;
+
+  return (
+    <div className="w-32">
+      <div className="mb-0.5 flex justify-between text-[10px] text-purple-400">
+        <span>{label}</span>
+        <span>{Math.round(percent)}%</span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+        <div
+          className="h-full rounded-full bg-purple-400 transition-all duration-500"
           style={{ width: `${percent}%` }}
         />
       </div>
@@ -177,15 +272,21 @@ export default function VideosPage() {
   const [pendingAction, setPendingAction] = useState<{ video: Video; action: ActionType } | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
 
+  // Track active transcode stages (videoId → stage from SSE) and active analyses
+  const [transcodeStages, setTranscodeStages] = useState<Record<string, string>>({});
+  const [activeAnalyzeIds, setActiveAnalyzeIds] = useState<Set<string>>(new Set());
+
   // Inline notification toast
   const [notification, setNotification] = useState<{ msg: string; ok: boolean } | null>(null);
   const notifyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Tracks the preview_start_time at the time analysis was triggered (to detect completion)
+  const analyzeSnapshotRef = useRef<Record<string, number | null>>({});
   const pageSize = 20;
 
-  const fetchVideos = useCallback(async () => {
-    setLoading(true);
+  const fetchVideos = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const params: Record<string, string> = {
         page: String(page),
@@ -197,10 +298,23 @@ export default function VideosPage() {
       const data = await api.get<PaginatedResponse<Video>>("/admin/videos", params);
       setVideos(data.items);
       setTotal(data.total);
+      // Clear analyze-in-progress for any video whose preview_start_time changed since we started watching
+      setActiveAnalyzeIds((analyzing) => {
+        if (analyzing.size === 0) return analyzing;
+        const snapshot = analyzeSnapshotRef.current;
+        const updated = new Set(analyzing);
+        for (const v of data.items) {
+          if (updated.has(v.id) && v.preview_start_time !== snapshot[v.id]) {
+            updated.delete(v.id);
+            delete snapshot[v.id];
+          }
+        }
+        return updated.size === analyzing.size ? analyzing : updated;
+      });
     } catch {
       setVideos([]);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [page, statusFilter, search]);
 
@@ -341,6 +455,8 @@ export default function VideosPage() {
   };
 
   const handleFeatureToggle = async (video: Video) => {
+    // Optimistic update for instant visual feedback
+    setVideos((prev) => prev.map((v) => v.id === video.id ? { ...v, is_featured: !v.is_featured } : v));
     try {
       await api.post(`/admin/videos/${video.id}/feature`);
       showNotification(
@@ -349,6 +465,9 @@ export default function VideosPage() {
       );
       fetchVideos();
     } catch (err) {
+      // Revert optimistic update on failure
+      setVideos((prev) => prev.map((v) => v.id === video.id ? { ...v, is_featured: video.is_featured } : v));
+      if (err instanceof Error && err.name === "AbortError") return;
       const detail = err instanceof Error ? err.message : String(err);
       showNotification(detail || `Failed to update "${video.title}".`, false);
     }
@@ -387,23 +506,32 @@ export default function VideosPage() {
   const executeAction = async () => {
     if (!pendingAction) return;
     const { video, action } = pendingAction;
+
+    if (action === "retranscode") {
+      setPendingAction(null);
+      showNotification(`Retranscode queued for "${video.title}".`, true);
+      api.post(`/admin/videos/${video.id}/retranscode`).then(() => fetchVideos()).catch(() => {});
+      return;
+    }
+
+    if (action === "analyze") {
+      setPendingAction(null);
+      showNotification(`Scene analysis started for "${video.title}".`, true);
+      analyzeSnapshotRef.current[video.id] = video.preview_start_time ?? null;
+      setActiveAnalyzeIds((prev) => new Set([...prev, video.id]));
+      api.post(`/admin/videos/${video.id}/analyze-preview`).catch(() => {});
+      return;
+    }
+
+    // delete — await so errors can be shown
     setActionLoading(true);
     try {
-      if (action === "delete") {
-        await api.delete(`/admin/videos/${video.id}`);
-        showNotification(`"${video.title}" deleted.`, true);
-        fetchVideos();
-      } else if (action === "retranscode") {
-        await api.post(`/admin/videos/${video.id}/retranscode`);
-        showNotification(`Retranscode queued for "${video.title}".`, true);
-        fetchVideos();
-      } else if (action === "analyze") {
-        await api.post(`/admin/videos/${video.id}/analyze-preview`);
-        showNotification(`Scene analysis started for "${video.title}". Preview timestamp will update shortly.`, true);
-      }
+      await api.delete(`/admin/videos/${video.id}`);
+      showNotification(`"${video.title}" deleted.`, true);
+      fetchVideos();
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      showNotification(detail || `Action failed for "${video.title}".`, false);
+      showNotification(detail || `Failed to delete "${video.title}".`, false);
     } finally {
       setActionLoading(false);
       setPendingAction(null);
@@ -484,7 +612,25 @@ export default function VideosPage() {
                     </td>
                     <td className="px-4 py-3">
                       {v.status === "processing" ? (
-                        <TranscodeProgress videoId={v.id} onComplete={fetchVideos} />
+                        <TranscodeProgress
+                          videoId={v.id}
+                          onComplete={() => fetchVideos(true)}
+                          onStageChange={(stage) =>
+                            setTranscodeStages((prev) => ({ ...prev, [v.id]: stage }))
+                          }
+                        />
+                      ) : activeAnalyzeIds.has(v.id) ? (
+                        <SceneAnalysisProgress
+                          videoId={v.id}
+                          onComplete={() => {
+                            setActiveAnalyzeIds((prev) => {
+                              const next = new Set(prev);
+                              next.delete(v.id);
+                              return next;
+                            });
+                            fetchVideos(true);
+                          }}
+                        />
                       ) : (
                         <span className={`flex items-center gap-1.5 ${st.color}`}>
                           {st.icon} {st.label}
@@ -507,24 +653,33 @@ export default function VideosPage() {
                     <td className="px-4 py-3 text-gray-400">{v.view_count.toLocaleString()}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
-                        {v.status !== "processing" && (
-                          <button
-                            onClick={() => requestAction(v, "retranscode")}
-                            className={`rounded p-1.5 hover:bg-white/10 ${v.status === "failed" ? "text-red-400 hover:text-red-300" : "text-gray-400 hover:text-blue-400"}`}
-                            title={v.status === "failed" ? "Retry Transcode" : "Transcode to HLS"}
-                          >
-                            <RefreshCw size={16} />
-                          </button>
-                        )}
-                        {v.source_path && (
-                          <button
-                            onClick={() => requestAction(v, "analyze")}
-                            className={`rounded p-1.5 hover:bg-white/10 hover:text-purple-400 ${v.preview_start_time != null ? "text-purple-400" : "text-gray-400"}`}
-                            title={v.preview_start_time != null ? `Re-analyze preview (current: ${v.preview_start_time}s)` : "Analyze preview scene (AI)"}
-                          >
-                            <ScanSearch size={16} />
-                          </button>
-                        )}
+                        {v.status !== "deleted" && (() => {
+                          const activeStage = transcodeStages[v.id];
+                          const transcoding = v.status === "processing" && !!activeStage && activeStage !== "queued" && activeStage !== "completed" && activeStage !== "failed";
+                          return (
+                            <button
+                              onClick={() => !transcoding && requestAction(v, "retranscode")}
+                              disabled={transcoding}
+                              className={`rounded p-1.5 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40 ${v.status === "failed" ? "text-red-400 hover:text-red-300" : v.status === "processing" ? "text-yellow-400 hover:text-yellow-300" : "text-gray-400 hover:text-blue-400"}`}
+                              title={transcoding ? "Transcoding in progress…" : v.status === "failed" ? "Retry Transcode" : v.status === "processing" ? "Force Retranscode" : "Transcode to HLS"}
+                            >
+                              <RefreshCw size={16} />
+                            </button>
+                          );
+                        })()}
+                        {v.source_path && (() => {
+                          const analyzing = activeAnalyzeIds.has(v.id);
+                          return (
+                            <button
+                              onClick={() => !analyzing && requestAction(v, "analyze")}
+                              disabled={analyzing}
+                              className={`rounded p-1.5 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40 hover:text-purple-400 ${v.preview_start_time != null ? "text-purple-400" : "text-gray-400"}`}
+                              title={analyzing ? "Scene analysis in progress…" : v.preview_start_time != null ? `Re-analyze preview (current: ${v.preview_start_time}s)` : "Analyze preview scene (AI)"}
+                            >
+                              <ScanSearch size={16} />
+                            </button>
+                          );
+                        })()}
                         <button
                           onClick={() => handleFeatureToggle(v)}
                           className="rounded p-1.5 text-gray-400 hover:bg-white/10 hover:text-yellow-400"

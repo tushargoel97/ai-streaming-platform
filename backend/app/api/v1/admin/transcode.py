@@ -59,6 +59,40 @@ async def transcode_status_sse(
     )
 
 
+@router.get("/analyze/{video_id}/status")
+async def analyze_status_sse(
+    video_id: uuid.UUID,
+    user: User = Depends(require_admin),
+):
+    """SSE endpoint streaming scene-analysis progress for a video."""
+
+    async def event_stream():
+        r = aioredis.from_url(settings.redis_url)
+        try:
+            while True:
+                data = await r.get(f"analyze:progress:{video_id}")
+                if data:
+                    payload = json.loads(data)
+                    yield f"data: {json.dumps(payload)}\n\n"
+                    if payload.get("percent", 0) >= 100 or payload.get("stage") == "failed":
+                        break
+                else:
+                    yield f"data: {json.dumps({'percent': 0, 'stage': 'queued'})}\n\n"
+                await asyncio.sleep(1)
+        finally:
+            await r.aclose()
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/{video_id}/job")
 async def get_transcode_job(
     video_id: uuid.UUID,

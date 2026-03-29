@@ -51,6 +51,22 @@ def start_transcode(video_id: uuid.UUID) -> None:
 
 async def _transcode_pipeline(video_id: uuid.UUID) -> None:
     """Full transcode pipeline: probe → transcode → thumbnails → upload → update DB."""
+    # Dedup guard: skip if another task is already actively transcoding this video.
+    # "queued" means no task has started yet (stuck video); any other active stage
+    # means a real task is running and this duplicate should bail.
+    r = aioredis.from_url(settings.redis_url)
+    try:
+        raw = await r.get(f"transcode:progress:{video_id}")
+        if raw:
+            import json as _json
+            payload = _json.loads(raw)
+            active_stage = payload.get("stage", "")
+            if active_stage not in ("", "queued", "completed", "failed"):
+                logger.warning("Skipping duplicate transcode task for %s (stage=%s)", video_id, active_stage)
+                return
+    finally:
+        await r.aclose()
+
     job_id: uuid.UUID | None = None
     async with async_session() as db:
         try:

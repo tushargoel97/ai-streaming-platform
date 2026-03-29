@@ -10,11 +10,13 @@ Pipeline:
 
 import asyncio
 import base64
+import json
 import logging
 import re
 import uuid
 
 import httpx
+import redis.asyncio as aioredis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +25,19 @@ from app.models.ai_settings import AISettings
 from app.models.video import Video
 
 logger = logging.getLogger(__name__)
+
+
+async def _publish_scene_progress(video_id: uuid.UUID, percent: float, stage: str) -> None:
+    """Store scene-analysis progress in Redis for SSE consumption."""
+    r = aioredis.from_url(settings.redis_url)
+    try:
+        await r.set(
+            f"analyze:progress:{video_id}",
+            json.dumps({"percent": round(percent, 1), "stage": stage}),
+            ex=3600,
+        )
+    finally:
+        await r.aclose()
 
 # Max frames to extract and send to the vision model
 _MAX_VISION_FRAMES = 5
@@ -213,8 +228,14 @@ async def compute_preview_timestamp(
     video_path: str,
     video: Video,
     scene_analysis_model: str | None = None,
+    report=None,
 ) -> float:
-    """Full pipeline: FFmpeg scene detection → frame extraction → AI → heuristic fallback."""
+    """Full pipeline: FFmpeg scene detection → frame extraction → AI → heuristic fallback.
+
+    `report` is an optional async callable(percent, stage) for progress updates.
+    """
+    if report:
+        await report(10, "detecting")
     candidates = await _detect_scene_candidates(video_path, float(video.duration))
 
     frames_b64: list[str] = []
@@ -222,6 +243,8 @@ async def compute_preview_timestamp(
 
     # Extract frames if a vision model is configured
     if scene_analysis_model and candidates:
+        if report:
+            await report(40, "extracting")
         extracted_frames, vision_candidates = await _extract_frames_for_candidates(
             video_path, candidates
         )
@@ -233,6 +256,8 @@ async def compute_preview_timestamp(
             )
 
     # Ask AI service (will use vision if frames provided, text LLM otherwise)
+    if report:
+        await report(70, "asking_ai")
     result = await _ask_ai_for_timestamp(
         video,
         vision_candidates if frames_b64 else candidates,
@@ -262,13 +287,21 @@ async def run_scene_analysis(video_id: uuid.UUID, db: AsyncSession) -> float | N
         "Running scene analysis for video %s (model=%s) at %s",
         video_id, scene_analysis_model, video_path,
     )
+
+    async def report(percent: float, stage: str) -> None:
+        await _publish_scene_progress(video_id, percent, stage)
+
     try:
-        ts = await compute_preview_timestamp(video_path, video, scene_analysis_model)
+        await _publish_scene_progress(video_id, 5, "detecting")
+        ts = await compute_preview_timestamp(video_path, video, scene_analysis_model, report=report)
+        await _publish_scene_progress(video_id, 90, "finalizing")
         video.preview_start_time = ts
         await db.commit()
+        await _publish_scene_progress(video_id, 100, "completed")
         logger.info("preview_start_time=%.1fs set for video %s", ts, video_id)
         return ts
     except Exception:
         logger.exception("Scene analysis failed for video %s", video_id)
+        await _publish_scene_progress(video_id, -1, "failed")
         await db.rollback()
         return None
