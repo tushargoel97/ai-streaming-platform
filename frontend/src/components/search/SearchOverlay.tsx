@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { Search, X, Loader2, Play, TrendingUp, Clock, Star, Sparkles, Film, ArrowRight } from "lucide-react";
+import { Search, X, Loader2, Play, TrendingUp, Clock, Sparkles, Film, ArrowRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "@/api/client";
 import type { Video, Talent, Series } from "@/types/api";
@@ -30,15 +30,15 @@ interface SearchOverlayProps {
   onClose: () => void;
 }
 
-// ── Poster Card ─────────────────────────────────────────────────────────────────
+// ── Video Card ──────────────────────────────────────────────────────────────────
 
-function PosterCard({ video, onClick }: { video: Video; onClick: () => void }) {
+function VideoThumbCard({ video, onClick }: { video: Video; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="group relative overflow-hidden rounded-lg text-left transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
+      className="group text-left focus:outline-none"
     >
-      <div className="relative aspect-[2/3] w-full overflow-hidden rounded-lg bg-[#1a1a1a]">
+      <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-[#1c1c1c] transition-transform duration-200 group-hover:scale-[1.03]">
         {video.thumbnail_url ? (
           <img
             src={video.thumbnail_url}
@@ -51,38 +51,23 @@ function PosterCard({ video, onClick }: { video: Video; onClick: () => void }) {
           </div>
         )}
 
-        {/* Gradient overlay */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
-
-        {/* Play icon on hover */}
-        <div className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/90 shadow-lg">
-            <Play size={20} className="ml-0.5 fill-black text-black" />
+        {/* Dark gradient + play on hover */}
+        <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-all duration-200 group-hover:bg-black/30">
+          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white/90 opacity-0 shadow-lg transition-opacity duration-200 group-hover:opacity-100">
+            <Play size={18} className="ml-0.5 fill-black text-black" />
           </div>
         </div>
 
-        {/* Title at bottom */}
-        <div className="absolute bottom-0 left-0 right-0 p-2.5">
-          <p className="line-clamp-2 text-xs font-semibold leading-tight text-white drop-shadow-lg">
-            {video.title}
-          </p>
-        </div>
-
-        {/* Badges */}
-        {video.is_featured && (
-          <span className="absolute left-1.5 top-1.5 rounded bg-[var(--primary)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
-            Featured
-          </span>
-        )}
-
-        {/* Rating badge */}
+        {/* IMDB rating */}
         {video.imdb_rating && (
-          <span className="absolute right-1.5 top-1.5 flex items-center gap-0.5 rounded bg-yellow-500/90 px-1.5 py-0.5 text-[10px] font-bold text-black">
-            <Star size={8} className="fill-current" />
-            {video.imdb_rating}
+          <span className="absolute right-1.5 top-1.5 flex items-center gap-0.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-bold text-yellow-400 backdrop-blur-sm">
+            ★ {video.imdb_rating}
           </span>
         )}
       </div>
+      <p className="mt-1.5 line-clamp-1 text-[13px] font-medium text-gray-200 group-hover:text-white">
+        {video.title}
+      </p>
     </button>
   );
 }
@@ -124,9 +109,9 @@ function SeriesCard({ series, onClick }: { series: Series; onClick: () => void }
   return (
     <button
       onClick={onClick}
-      className="group relative overflow-hidden rounded-lg text-left transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
+      className="group text-left focus:outline-none"
     >
-      <div className="relative aspect-[2/3] w-full overflow-hidden rounded-lg bg-[#1a1a1a]">
+      <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-[#1c1c1c] transition-transform duration-200 group-hover:scale-[1.03]">
         {series.poster_url ? (
           <img
             src={series.poster_url}
@@ -134,23 +119,27 @@ function SeriesCard({ series, onClick }: { series: Series; onClick: () => void }
             className="h-full w-full object-cover"
           />
         ) : (
-          <div className="flex h-full flex-col items-center justify-center gap-1 p-3 text-center">
+          <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
             <Play size={24} className="text-gray-600" />
-            <p className="text-xs text-gray-500">{series.title}</p>
           </div>
         )}
-
-        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent p-2.5 pt-8">
-          <p className="line-clamp-2 text-xs font-semibold leading-tight text-white">
-            {series.title}
-          </p>
-          <div className="mt-1 flex items-center gap-2 text-[10px] text-gray-400">
-            {series.status === "ongoing" && <span className="text-green-400">Ongoing</span>}
-            {series.status === "completed" && <span>Completed</span>}
-            {series.year_started && <span>{series.year_started}</span>}
+        <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-all duration-200 group-hover:bg-black/30">
+          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white/90 opacity-0 shadow-lg transition-opacity duration-200 group-hover:opacity-100">
+            <Play size={18} className="ml-0.5 fill-black text-black" />
           </div>
         </div>
+        {series.status === "ongoing" && (
+          <span className="absolute left-1.5 top-1.5 rounded bg-green-500/80 px-1.5 py-0.5 text-[10px] font-bold text-white backdrop-blur-sm">
+            Ongoing
+          </span>
+        )}
       </div>
+      <p className="mt-1.5 line-clamp-1 text-[13px] font-medium text-gray-200 group-hover:text-white">
+        {series.title}
+      </p>
+      {series.year_started && (
+        <p className="text-[12px] text-gray-500">{series.year_started}</p>
+      )}
     </button>
   );
 }
@@ -501,10 +490,11 @@ export default function SearchOverlay({ open, onClose }: SearchOverlayProps) {
                       {/* Talent Results */}
                       {results.talents.length > 0 && (
                         <section className="mb-8">
-                          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-gray-400">
+                          <h3 className="mb-4 flex items-center gap-2.5 text-base font-semibold text-white">
+                            <span className="h-5 w-1 rounded-full bg-red-500" />
                             People
                           </h3>
-                          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+                          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
                             {results.talents.map((t) => (
                               <TalentCard
                                 key={t.id}
@@ -519,10 +509,11 @@ export default function SearchOverlay({ open, onClose }: SearchOverlayProps) {
                       {/* Series Results */}
                       {results.series.length > 0 && (
                         <section className="mb-8">
-                          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-gray-400">
+                          <h3 className="mb-4 flex items-center gap-2.5 text-base font-semibold text-white">
+                            <span className="h-5 w-1 rounded-full bg-red-500" />
                             Series
                           </h3>
-                          <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7">
+                          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
                             {results.series.map((s) => (
                               <SeriesCard
                                 key={s.id}
@@ -537,12 +528,13 @@ export default function SearchOverlay({ open, onClose }: SearchOverlayProps) {
                       {/* Video Results */}
                       {results.videos.length > 0 && (
                         <section className="mb-8">
-                          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-gray-400">
+                          <h3 className="mb-4 flex items-center gap-2.5 text-base font-semibold text-white">
+                            <span className="h-5 w-1 rounded-full bg-red-500" />
                             Videos
                           </h3>
-                          <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7">
+                          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
                             {results.videos.map((v) => (
-                              <PosterCard
+                              <VideoThumbCard
                                 key={v.id}
                                 video={v}
                                 onClick={() => navigateTo(`/watch/${v.id}`)}
@@ -560,13 +552,13 @@ export default function SearchOverlay({ open, onClose }: SearchOverlayProps) {
                       {/* Trending */}
                       {trending.length > 0 && (
                         <section className="mb-10">
-                          <h3 className="mb-4 flex items-center gap-2 text-base font-semibold text-white">
+                          <h3 className="mb-4 flex items-center gap-2.5 text-base font-semibold text-white">
                             <TrendingUp size={18} className="text-[var(--primary)]" />
                             Trending Now
                           </h3>
-                          <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7">
-                            {trending.map((v) => (
-                              <PosterCard
+                          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                            {trending.slice(0, 10).map((v) => (
+                              <VideoThumbCard
                                 key={v.id}
                                 video={v}
                                 onClick={() => navigateTo(`/watch/${v.id}`)}
@@ -579,13 +571,13 @@ export default function SearchOverlay({ open, onClose }: SearchOverlayProps) {
                       {/* Recently Added */}
                       {recentlyAdded.length > 0 && (
                         <section className="mb-10">
-                          <h3 className="mb-4 flex items-center gap-2 text-base font-semibold text-white">
+                          <h3 className="mb-4 flex items-center gap-2.5 text-base font-semibold text-white">
                             <Clock size={18} className="text-[var(--primary)]" />
                             Recently Added
                           </h3>
-                          <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7">
-                            {recentlyAdded.map((v) => (
-                              <PosterCard
+                          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                            {recentlyAdded.slice(0, 10).map((v) => (
+                              <VideoThumbCard
                                 key={v.id}
                                 video={v}
                                 onClick={() => navigateTo(`/watch/${v.id}`)}
