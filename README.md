@@ -1,6 +1,6 @@
 # StreamPlatform
 
-A self-hosted, AI-powered video streaming platform. Upload content, transcode it to adaptive HLS, and serve it with a polished streaming UI — deployable anywhere, with AI features powered by a self-hosted LLM service rather than external AI API calls.
+A self-hosted, AI-powered video streaming platform. Upload content, transcode it to adaptive HLS, and serve it with a polished streaming UI, deployable anywhere, with AI features powered by a self-hosted LLM service rather than external AI API calls.
 
 ---
 
@@ -32,7 +32,7 @@ A self-hosted, AI-powered video streaming platform. Upload content, transcode it
 |---------|------|-------------|
 | `nginx` | 8080 / 1935 | Reverse proxy, HLS file serving, RTMP live ingest |
 | `backend` | 8000 | FastAPI REST API, auth, video metadata |
-| `worker` | — | Celery worker — transcoding, AI tasks, embeddings |
+| `worker` | — | Celery worker, transcoding, AI tasks, embeddings |
 | `ai` | 8100 | Local AI microservice (embeddings, scene analysis, intro detection) |
 | `frontend` | 3000 | React SPA (Vite + Tailwind) |
 | `postgres` | 5432 | Primary database with `pgvector` for semantic search |
@@ -43,39 +43,39 @@ A self-hosted, AI-powered video streaming platform. Upload content, transcode it
 ## Features
 
 ### Content & Playback
-- **Adaptive HLS streaming** — FFmpeg transcodes uploads to 360p / 480p / 720p / 1080p / 4K variants automatically
-- **Auto hero banner rotation** — cycles through featured content every 25 seconds with a live progress bar
-- **Netflix-style UI** — hero banner, carousels, Top 10 ranked rows, portrait cards
-- **Video detail modal** — expandable preview with episodes list (series) or "More Like This" (movies)
-- **Continue watching** — per-user watch progress tracked and displayed
-- **HLS preview on hover** — cards show a muted 4-second clip when hovered
+- **Adaptive HLS streaming.** FFmpeg transcodes uploads to 360p / 480p / 720p / 1080p / 4K variants automatically.
+- **Auto hero banner rotation.** Cycles through featured content every 25 seconds with a live progress bar.
+- **Rich streaming UI.** Hero banner, carousels, Top 10 ranked rows, portrait cards.
+- **Video detail modal.** Expandable preview with episodes list (series) or "More Like This" (movies).
+- **Continue watching.** Per-user watch progress tracked and displayed.
+- **HLS preview on hover.** Cards show a muted clip when hovered.
 
 ### AI-Powered Features
-- **Skip Intro button** — local AI detects opening title sequences using audio fingerprinting (series) and frame analysis (all videos); auto-runs after every transcode
-- **AI scene analysis** — picks the best preview start timestamp using a local vision model
-- **Semantic search** — vector embeddings (pgvector) power similarity-based recommendations
-- **Metadata enrichment** — OMDB/TMDB APIs fill in ratings, descriptions, and genre on ingest
-- **Personalized recommendations** — collaborative + content-based feed per user
+- **Skip Intro button.** Local AI detects opening title sequences using audio fingerprinting (series) and frame analysis (all videos), runs automatically after every transcode.
+- **AI scene analysis.** Picks the best preview start timestamp using a local vision model.
+- **Semantic search.** Vector embeddings (pgvector) power similarity-based recommendations.
+- **Metadata enrichment.** OMDB/TMDB APIs fill in ratings, descriptions, and genre on ingest.
+- **Personalized recommendations.** Collaborative and content-based feed per user.
 
 ### Live Streaming
-- **RTMP ingest** → HLS output via Nginx-RTMP
-- Live chat (WebSocket)
-- PPV / pay-per-view support
+- **RTMP ingest** → HLS output via Nginx-RTMP.
+- Live chat (WebSocket).
+- PPV / pay-per-view support.
 
 ### Admin Panel
-- Video upload & management (drag-and-drop, bulk re-transcode)
-- Series / season / episode management
-- User & subscription management
-- AI settings (model selection per feature)
-- Tenant / white-label configuration
-- Analytics dashboard
+- Video upload & management (drag-and-drop, bulk re-transcode).
+- Series / season / episode management.
+- User & subscription management.
+- AI settings (model selection per feature).
+- Tenant / white-label configuration.
+- Analytics dashboard.
 
 ### Auth
-- Email + password
-- Email OTP (passwordless)
-- Google / Facebook OAuth
-- Role-based access (viewer / admin / superadmin)
-- Subscription tier gating
+- Email + password.
+- Email OTP (passwordless).
+- Google / Facebook OAuth.
+- Role-based access (viewer / admin / superadmin).
+- Subscription tier gating.
 
 ---
 
@@ -83,11 +83,11 @@ A self-hosted, AI-powered video streaming platform. Upload content, transcode it
 
 ### Prerequisites
 
-- [Docker](https://docs.docker.com/get-docker/) and Docker Compose v2
-- 8 GB RAM minimum (16 GB recommended for AI features)
-- FFmpeg is bundled inside the backend container
+- [Docker](https://docs.docker.com/get-docker/) and Docker Compose v2.
+- 8 GB RAM minimum, 16 GB recommended for AI features.
+- FFmpeg is bundled inside the backend container.
 
-### 1 — Clone and configure
+### 1. Clone and configure
 
 ```bash
 git clone <repo-url>
@@ -114,31 +114,31 @@ LOCAL_MEDIA_PATH=/media
 # AI service
 AI_SERVICE_URL=http://ai:8100
 
-# Optional — metadata enrichment
+# Optional, metadata enrichment
 OMDB_API_KEY=
 TMDB_API_KEY=
 
-# Optional — OAuth
+# Optional, OAuth
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 FACEBOOK_APP_ID=
 FACEBOOK_APP_SECRET=
 ```
 
-### 2 — Start all services
+### 2. Start all services
 
 ```bash
 make up          # build + start (foreground)
 make up-d        # build + start (background)
 ```
 
-### 3 — Run migrations
+### 3. Run migrations
 
 ```bash
 make db-migrate
 ```
 
-### 4 — Open the app
+### 4. Open the app
 
 | URL | What |
 |-----|------|
@@ -270,12 +270,10 @@ Then set `FFMPEG_HWACCEL=nvenc` in `.env`.
 
 After every transcode, a background Celery task automatically detects the intro/opening sequence:
 
-1. **Series (audio fingerprinting)** — extracts 8kHz mono PCM from up to 5 sibling episodes, hashes 2-second audio windows using 8-band energy (SHA-256), and finds the longest common audio run across all episodes.
-2. **All videos (AI vision)** — samples one frame every 10 seconds from the first 4 minutes and asks the local vision model to identify where the intro ends.
+1. **Series (audio fingerprinting).** Extracts 8kHz mono PCM from up to 5 sibling episodes, hashes 2-second audio windows using 8-band energy (SHA-256), and finds the longest common audio run across all episodes.
+2. **All videos (AI vision).** Samples one frame every 10 seconds from the first 4 minutes and asks the local vision model to identify where the intro ends.
 
-Results are stored as `intro_start` / `intro_end` (seconds) on the video record and surfaced as a **Skip Intro** button in the player.
-
-You can also trigger detection manually or override timestamps from the admin panel.
+Results are stored as `intro_start` / `intro_end` (seconds) on the video record and surfaced as a Skip Intro button in the player. Detection can also be triggered manually or timestamps overridden from the admin panel.
 
 ---
 
@@ -283,7 +281,7 @@ You can also trigger detection manually or override timestamps from the admin pa
 
 | Backend | Config | Notes |
 |---------|--------|-------|
-| Local filesystem | `STORAGE_BACKEND=local` | Default; served via Nginx |
+| Local filesystem | `STORAGE_BACKEND=local` | Default, served via Nginx |
 | Amazon S3 | `STORAGE_BACKEND=s3` | Set `AWS_*` vars in `.env` |
 
 ---
