@@ -48,6 +48,10 @@ class Video(Base):
     # AI-selected preview start time (seconds into video) — avoids title cards
     preview_start_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
+    # Intro detection (seconds) — used for "Skip Intro" button
+    intro_start: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    intro_end: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     # Status
     status: Mapped[str] = mapped_column(String(20), default="uploading")
 

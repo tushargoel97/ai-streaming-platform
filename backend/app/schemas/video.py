@@ -88,6 +88,8 @@ class VideoResponse(BaseModel):
     subtitle_tracks: list[SubtitleTrackResponse] = []
 
     preview_start_time: float | None = None
+    intro_start: float | None = None
+    intro_end: float | None = None
 
     # Resolved URLs (populated by validator from *_path fields)
     thumbnail_url: str = ""

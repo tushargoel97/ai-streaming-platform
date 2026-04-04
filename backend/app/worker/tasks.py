@@ -28,6 +28,21 @@ def transcode_video(self, video_id: str) -> None:
     asyncio.run(_transcode_pipeline(uuid.UUID(video_id)))
 
 
+@celery.task(name="detect_intro", bind=True, max_retries=0)
+def detect_intro(self, video_id: str) -> None:
+    """Detect the intro/opening title sequence for a video."""
+
+    async def _run() -> None:
+        from app.database import async_session
+        from app.services.intro_detection import run_intro_detection
+
+        async with async_session() as db:
+            await run_intro_detection(uuid.UUID(video_id), db)
+
+    _reset_db_pool()
+    asyncio.run(_run())
+
+
 @celery.task(name="analyze_scene", bind=True, max_retries=0)
 def analyze_scene(self, video_id: str) -> None:
     """Run AI scene analysis to pick an optimal preview timestamp."""

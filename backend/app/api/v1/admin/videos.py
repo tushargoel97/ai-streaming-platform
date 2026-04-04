@@ -8,6 +8,7 @@ import redis.asyncio as aioredis
 
 import aiofiles
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -343,6 +344,59 @@ async def toggle_featured(
         raise HTTPException(status_code=404, detail="Video not found")
 
     video.is_featured = not video.is_featured
+    video.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(video, ["categories", "tenant_videos"])
+    return VideoResponse.from_video(video)
+
+
+class IntroTimestampsRequest(BaseModel):
+    intro_start: float | None = None
+    intro_end: float | None = None
+
+
+@router.post("/{video_id}/detect-intro", response_model=VideoResponse)
+async def detect_intro_endpoint(
+    video_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    """Trigger AI intro detection for a video (runs as a background Celery task)."""
+    result = await db.execute(
+        select(Video).options(selectinload(Video.categories), selectinload(Video.tenant_videos)).where(Video.id == video_id)
+    )
+    video = result.scalar_one_or_none()
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    if not video.source_path:
+        raise HTTPException(status_code=400, detail="Video has no source file")
+
+    def _enqueue():
+        from app.worker.tasks import detect_intro
+        detect_intro.apply_async((str(video_id),), retry=False)
+
+    background_tasks.add_task(_enqueue)
+    return VideoResponse.from_video(video)
+
+
+@router.patch("/{video_id}/intro", response_model=VideoResponse)
+async def set_intro_timestamps(
+    video_id: uuid.UUID,
+    body: IntroTimestampsRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    """Manually set or clear intro timestamps for a video."""
+    result = await db.execute(
+        select(Video).options(selectinload(Video.categories), selectinload(Video.tenant_videos)).where(Video.id == video_id)
+    )
+    video = result.scalar_one_or_none()
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    video.intro_start = body.intro_start
+    video.intro_end = body.intro_end
     video.updated_at = datetime.utcnow()
     await db.commit()
     await db.refresh(video, ["categories", "tenant_videos"])

@@ -220,6 +220,110 @@ async def select_preview_timestamp(body: PreviewTimestampRequest):
         return PreviewTimestampResponse(preview_start_time=round(chosen, 1), method="heuristic")
 
 
+_DETECT_INTRO_VISION_SYSTEM = """You are an expert video editor analyzing frames from the beginning of a TV show or movie.
+Your job: find where the opening title sequence (intro) ends and the main content begins.
+
+The frames are spaced evenly apart (e.g. one frame every 10 seconds), starting from the very beginning.
+
+An "intro" typically includes:
+- Production studio logos
+- Show/movie title cards with stylized text or animations
+- Animated opening sequences with theme music
+- Credits over abstract or stylized backgrounds
+
+The main content starts when you see:
+- Real story action, characters in a scene, dialogue
+- A clear narrative beginning (not credits or title graphics)
+
+Return valid JSON only:
+{"intro_end_frame": <1-based frame index of the LAST intro frame, or 0 if no distinct intro>}
+
+If the very first frame is already story content, return 0."""
+
+_DETECT_INTRO_TEXT_SYSTEM = """You are analyzing a video to find its intro/opening title sequence.
+Given the video duration and the number of frames sampled from the first few minutes,
+estimate where the opening title sequence ends.
+
+Most TV episode intros are 30–90 seconds. Feature film title sequences run 1–4 minutes.
+Short clips and standalone videos often have no distinct intro (return 0).
+
+Return valid JSON only:
+{"intro_end_seconds": <estimated end time in seconds, or 0 if no intro>}"""
+
+
+class DetectIntroRequest(BaseModel):
+    title: str
+    duration_seconds: float
+    # Frames from the start of the video, evenly spaced (base64 JPEG)
+    frames_b64: list[str] = []
+    frame_interval_seconds: float = 10.0
+    scene_analysis_model: str | None = None
+    llm_config: LLMConfig | None = None
+
+
+class DetectIntroResponse(BaseModel):
+    intro_start: float      # always 0.0
+    intro_end: float        # seconds; 0 if no intro detected
+    method: str = "heuristic"
+
+
+@router.post("/detect-intro", response_model=DetectIntroResponse)
+async def detect_intro(body: DetectIntroRequest):
+    """Detect the end of an opening title sequence using vision or text LLM."""
+    n_frames = len(body.frames_b64)
+
+    # ── Vision path ──
+    if n_frames > 0 and body.scene_analysis_model:
+        from app.services.local_llm_service import MODEL_CATALOG, chat_vision_json
+
+        if MODEL_CATALOG.get(body.scene_analysis_model, {}).get("vision"):
+            try:
+                prompt = (
+                    f'Video: "{body.title}" (duration: {int(body.duration_seconds)}s)\n'
+                    f"I am showing you {n_frames} frames sampled every "
+                    f"{body.frame_interval_seconds:.0f}s from the very beginning.\n"
+                    f"Frame 1 = {0:.0f}s, Frame {n_frames} = "
+                    f"{(n_frames - 1) * body.frame_interval_seconds:.0f}s\n\n"
+                    'Return JSON: {"intro_end_frame": <1-based last intro frame, or 0 if no intro>}'
+                )
+                result = await chat_vision_json(
+                    _DETECT_INTRO_VISION_SYSTEM,
+                    prompt,
+                    body.frames_b64,
+                    model_name=body.scene_analysis_model,
+                    max_tokens=64,
+                )
+                frame_idx = int(result.get("intro_end_frame", 0))
+                if frame_idx > 0:
+                    intro_end = min(
+                        frame_idx * body.frame_interval_seconds,
+                        body.duration_seconds * 0.35,  # cap at 35% of video
+                    )
+                    return DetectIntroResponse(intro_start=0.0, intro_end=round(intro_end, 1), method="vision")
+                return DetectIntroResponse(intro_start=0.0, intro_end=0.0, method="vision")
+            except Exception:
+                logger.warning("Vision model failed for detect-intro, falling back to text LLM")
+
+    # ── Text LLM path ──
+    try:
+        prompt = (
+            f'Title: "{body.title}"\n'
+            f"Duration: {int(body.duration_seconds)}s\n"
+            f"Frames sampled: {n_frames} frames every {body.frame_interval_seconds:.0f}s from start\n\n"
+            'Return JSON: {"intro_end_seconds": <seconds, or 0>}'
+        )
+        result = await ask_llm_json(
+            _DETECT_INTRO_TEXT_SYSTEM, prompt, max_tokens=64, config=body.llm_config,
+        )
+        intro_end = float(result.get("intro_end_seconds", 0))
+        intro_end = max(0.0, min(intro_end, body.duration_seconds * 0.35))
+        return DetectIntroResponse(intro_start=0.0, intro_end=round(intro_end, 1), method="text")
+    except Exception:
+        logger.warning("Text LLM failed for detect-intro, using heuristic")
+
+    return DetectIntroResponse(intro_start=0.0, intro_end=0.0, method="heuristic")
+
+
 @router.post("/recommend-reasons", response_model=RecommendReasonResponse)
 async def generate_recommendation_reasons(body: RecommendReasonRequest):
     """Generate human-readable reasons for why videos are recommended."""

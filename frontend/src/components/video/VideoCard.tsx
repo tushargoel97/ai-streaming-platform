@@ -29,9 +29,16 @@ interface VideoCardProps {
   progressPercent?: number;
   progressSeconds?: number;
   watchCount?: number;
+  portrait?: boolean;
 }
 
-export default function VideoCard({ video, progressPercent, progressSeconds, watchCount }: VideoCardProps) {
+export default function VideoCard({
+  video,
+  progressPercent,
+  progressSeconds,
+  watchCount,
+  portrait = false,
+}: VideoCardProps) {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuthStore();
   const [showPopup, setShowPopup] = useState(false);
@@ -45,30 +52,34 @@ export default function VideoCard({ video, progressPercent, progressSeconds, wat
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const exitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const exitAnim = useRef<Animation | null>(null);
-  const isOpen = useRef(false); // avoid stale closure issues
+  const isOpen = useRef(false);
 
-  // ── Calculate popup position once (aligned exactly over card) ──
+  // ── Calculate popup position (aligned over card, min 240px wide) ──
   const positionPopup = useCallback(() => {
     const card = cardRef.current;
     const popup = popupRef.current;
     if (!card || !popup) return;
 
     const rect = card.getBoundingClientRect();
-    const width = rect.width;
-    const popupH = (width * 9 / 16 + 140) * 1.05;
+    const popupW = Math.max(rect.width, portrait ? 240 : rect.width);
+    const popupH = (popupW * 9 / 16 + 140) * 1.05;
 
     let top = rect.top;
     if (top + popupH > window.innerHeight - 8) top = window.innerHeight - popupH - 8;
     top = Math.max(8, top);
 
+    // Center popup over card if wider than card
+    let left = rect.left - (popupW - rect.width) / 2;
+    if (left < 8) left = 8;
+    if (left + popupW > window.innerWidth - 8) left = window.innerWidth - popupW - 8;
+
     popup.style.top = `${top}px`;
-    popup.style.left = `${rect.left}px`;
-    popup.style.width = `${width}px`;
-  }, []);
+    popup.style.left = `${left}px`;
+    popup.style.width = `${popupW}px`;
+  }, [portrait]);
 
   // ── Open popup ─────────────────────────────────────────────
   const openPopup = useCallback(() => {
-    // If currently closing, cancel exit animation
     if (exitAnim.current) {
       exitAnim.current.cancel();
       exitAnim.current = null;
@@ -83,7 +94,6 @@ export default function VideoCard({ video, progressPercent, progressSeconds, wat
     if (!popup || !isOpen.current) return;
     isOpen.current = false;
 
-    // Cancel any pending exit
     if (exitAnim.current) exitAnim.current.cancel();
 
     exitAnim.current = popup.animate(...EXIT_ANIM);
@@ -96,11 +106,9 @@ export default function VideoCard({ video, progressPercent, progressSeconds, wat
   // ── Mouse handlers (card) ─────────────────────────────────
   const handleCardEnter = useCallback(() => {
     if (exitTimer.current) { clearTimeout(exitTimer.current); exitTimer.current = null; }
-    // Cancel exit animation if fading out
     if (exitAnim.current) {
       exitAnim.current.cancel();
       exitAnim.current = null;
-      // Popup is still mounted, re-play enter
       if (popupRef.current) {
         positionPopup();
         popupRef.current.animate(...ENTER_ANIM);
@@ -140,7 +148,7 @@ export default function VideoCard({ video, progressPercent, progressSeconds, wat
     popupRef.current?.animate(...ENTER_ANIM);
   }, [showPopup, positionPopup]);
 
-  // ── Dismiss popup on scroll (>25px threshold) ─────────────
+  // ── Dismiss popup on scroll ────────────────────────────────
   useEffect(() => {
     if (!showPopup) return;
     const startY = window.scrollY;
@@ -155,13 +163,12 @@ export default function VideoCard({ video, progressPercent, progressSeconds, wat
     return () => window.removeEventListener("scroll", onScroll);
   }, [showPopup, closePopup]);
 
-  // ── Video preview (HLS or MP4) ─────────────────────────────
+  // ── Video preview ─────────────────────────────────────────
   useEffect(() => {
     if (!showPopup || !video.manifest_url) return;
     const el = videoRef.current;
     if (!el) return;
     const isHls = video.manifest_url.endsWith(".m3u8");
-    // Seek to the AI-selected preview moment; fall back to 20% of duration or 30s
     const previewStart = video.preview_start_time
       ?? (video.duration > 0 ? video.duration * 0.20 : 30);
 
@@ -287,9 +294,9 @@ export default function VideoCard({ video, progressPercent, progressSeconds, wat
           onMouseEnter={handlePopupEnter}
           onMouseLeave={handlePopupLeave}
           style={{ position: "fixed", opacity: 0, transformOrigin: "center top" }}
-          className="z-[60] rounded-lg bg-[#181818] shadow-2xl shadow-black/80 ring-1 ring-white/10"
+          className="z-[60] overflow-hidden rounded-xl bg-[#181818] shadow-2xl shadow-black/80 ring-1 ring-white/10"
         >
-          <div className="relative aspect-video overflow-hidden rounded-t-lg">
+          <div className="relative aspect-video overflow-hidden">
             {video.manifest_url ? (
               <video
                 ref={videoRef}
@@ -329,7 +336,7 @@ export default function VideoCard({ video, progressPercent, progressSeconds, wat
               {isHD && <span className="rounded border border-gray-500 px-1 py-0.5 text-[10px] font-semibold text-gray-400">HD</span>}
             </div>
             {video.tags.length > 0 && (
-              <p className="mt-1.5 truncate text-xs text-gray-400">{video.tags.slice(0, 3).join(" \u00b7 ")}</p>
+              <p className="mt-1.5 truncate text-xs text-gray-400">{video.tags.slice(0, 3).join(" · ")}</p>
             )}
           </div>
         </div>,
@@ -337,6 +344,53 @@ export default function VideoCard({ video, progressPercent, progressSeconds, wat
       )
     : null;
 
+  // ── Portrait card (Top 10) — thumbnail only, no popup ────────
+  if (portrait) {
+    return (
+      <div className="relative transition-transform duration-300 hover:scale-[1.08] hover:z-20">
+        <Link to={`/watch/${video.id}`} className="block">
+          <div className="relative overflow-hidden rounded-lg bg-[var(--card)]" style={{ aspectRatio: "2/3" }}>
+            {video.thumbnail_url ? (
+              <img
+                src={video.thumbnail_url}
+                alt={video.title}
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center bg-gray-900 text-gray-700">
+                <Play size={28} />
+              </div>
+            )}
+
+            {/* Genre badge top-left */}
+            {(video.tags.length > 0 || video.series_id) && (
+              <span className="absolute left-2 top-2 rounded-sm bg-black/70 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest text-white backdrop-blur-sm">
+                {video.series_id ? "Series" : video.tags[0]}
+              </span>
+            )}
+
+            {/* IMDB rating top-right */}
+            {video.imdb_rating != null && (
+              <span className="absolute right-2 top-2 flex items-center gap-0.5 rounded-sm bg-black/70 px-1.5 py-0.5 text-[10px] font-bold text-yellow-400 backdrop-blur-sm">
+                ★ {video.imdb_rating.toFixed(1)}
+              </span>
+            )}
+
+            {/* Bottom gradient + title overlay */}
+            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent pt-10 pb-2.5 px-2.5">
+              <p className="truncate text-[11px] font-semibold text-white drop-shadow">
+                {video.title}
+              </p>
+            </div>
+
+            {progressBar}
+          </div>
+        </Link>
+      </div>
+    );
+  }
+
+  // ── Landscape card (default) ───────────────────────────────
   return (
     <div
       ref={cardRef}
@@ -345,31 +399,46 @@ export default function VideoCard({ video, progressPercent, progressSeconds, wat
       onMouseLeave={handleCardLeave}
     >
       <Link to={`/watch/${video.id}`} className="group block">
-        <div className="relative aspect-video overflow-hidden rounded-md bg-[var(--card)]">
+        <div className="relative aspect-video overflow-hidden rounded-lg bg-[var(--card)]">
           {video.thumbnail_url ? (
             <img
               src={video.thumbnail_url}
               alt={video.title}
-              className="h-full w-full object-cover"
+              className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
             />
           ) : (
             <div className="flex h-full items-center justify-center text-gray-600">
               <Play size={24} />
             </div>
           )}
+
+          {/* Genre / type badge — top left */}
+          {(video.tags.length > 0 || video.series_id) && watchCount == null && (
+            <span className="absolute left-1.5 top-1.5 rounded-sm bg-black/70 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest text-white backdrop-blur-sm">
+              {video.series_id ? "Series" : video.tags[0]}
+            </span>
+          )}
+
+          {/* IMDB rating — top right */}
+          {video.imdb_rating != null && (
+            <span className="absolute right-1.5 top-1.5 flex items-center gap-0.5 rounded-sm bg-black/70 px-1.5 py-0.5 text-[10px] font-bold text-yellow-400 backdrop-blur-sm">
+              ★ {video.imdb_rating.toFixed(1)}
+            </span>
+          )}
+
           {video.duration > 0 && !hasProgress && (
-            <span className="absolute bottom-1 right-1 rounded bg-black/80 px-1.5 py-0.5 text-[10px] text-white">
+            <span className="absolute bottom-1.5 right-1.5 rounded bg-black/80 px-1.5 py-0.5 text-[10px] text-white">
               {formatDuration(video.duration)}
             </span>
           )}
           {watchCount != null && watchCount > 0 && (
-            <span className="absolute left-1 top-1 flex items-center gap-1 rounded bg-black/80 px-1.5 py-0.5 text-[10px] font-medium text-green-400">
+            <span className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded bg-black/80 px-1.5 py-0.5 text-[10px] font-medium text-green-400">
               <RotateCcw size={10} /> Watch Again
             </span>
           )}
           {progressBar}
         </div>
-        <p className="mt-1.5 truncate text-sm font-medium group-hover:text-[var(--primary)]">
+        <p className="mt-1.5 truncate text-sm font-medium leading-snug group-hover:text-[var(--primary)]">
           {video.title}
         </p>
         <p className="text-xs text-gray-500">

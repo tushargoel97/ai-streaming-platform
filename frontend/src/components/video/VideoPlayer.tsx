@@ -9,8 +9,6 @@ import {
   VolumeX,
   Maximize,
   Minimize,
-  SkipBack,
-  SkipForward,
   Loader2,
   Subtitles,
   Settings,
@@ -21,6 +19,50 @@ import {
   Gauge,
   MonitorPlay,
 } from "lucide-react";
+
+// ── Skip arc icons (cineby-style) ────────────────────────────────────────────
+
+function SkipBackIcon() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+      {/* Counter-clockwise arc */}
+      <path
+        d="M13 4 A9 9 0 1 0 21.5 17"
+        stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" fill="none"
+      />
+      {/* Arrowhead pointing backward at top of arc */}
+      <polyline
+        points="13,1 13,6.5 8.5,4"
+        stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none"
+      />
+      <text x="13" y="15.5" textAnchor="middle" fontSize="7.5" fontWeight="700"
+        fontFamily="'Helvetica Neue',Helvetica,Arial,sans-serif" fill="currentColor">
+        10
+      </text>
+    </svg>
+  );
+}
+
+function SkipForwardIcon() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+      {/* Clockwise arc */}
+      <path
+        d="M13 4 A9 9 0 1 1 4.5 17"
+        stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" fill="none"
+      />
+      {/* Arrowhead pointing forward at top of arc */}
+      <polyline
+        points="13,1 13,6.5 17.5,4"
+        stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none"
+      />
+      <text x="13" y="15.5" textAnchor="middle" fontSize="7.5" fontWeight="700"
+        fontFamily="'Helvetica Neue',Helvetica,Arial,sans-serif" fill="currentColor">
+        10
+      </text>
+    </svg>
+  );
+}
 import type { AudioTrack, SubtitleTrack } from "@/types/api";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -48,6 +90,15 @@ export interface VideoPlayerProps {
   autoPlay?: boolean;
   onTimeUpdate?: (currentTime: number, duration: number) => void;
   onEnded?: () => void;
+  showEpisodesButton?: boolean;
+  onEpisodesClick?: () => void;
+  externalPanelOpen?: boolean;
+  hasPreviousEpisode?: boolean;
+  hasNextEpisode?: boolean;
+  onPreviousEpisode?: () => void;
+  onNextEpisode?: () => void;
+  introStart?: number | null;
+  introEnd?: number | null;
 }
 
 type SettingsPanel = "main" | "quality" | "speed" | "audio-subs";
@@ -62,6 +113,15 @@ export default function VideoPlayer({
   autoPlay = false,
   onTimeUpdate,
   onEnded,
+  showEpisodesButton = false,
+  onEpisodesClick,
+  externalPanelOpen = false,
+  hasPreviousEpisode = false,
+  hasNextEpisode = false,
+  onPreviousEpisode,
+  onNextEpisode,
+  introStart = null,
+  introEnd = null,
 }: VideoPlayerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -286,7 +346,7 @@ export default function VideoPlayer({
 
   // ── Controls auto-hide ─────────────────────────────────────────────────────
 
-  const anyPanelOpen = settingsOpen;
+  const anyPanelOpen = settingsOpen || externalPanelOpen;
 
   const resetHideTimer = useCallback(() => {
     setShowControls(true);
@@ -820,17 +880,32 @@ export default function VideoPlayer({
       {/* Skip animation overlays */}
       {skipAnimation === "back" && (
         <div className="absolute left-[15%] top-1/2 -translate-x-1/2 -translate-y-1/2 animate-ping">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white/20 backdrop-blur-sm">
-            <SkipBack size={28} className="text-white" />
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white/20 text-white backdrop-blur-sm">
+            <SkipForwardIcon />
           </div>
         </div>
       )}
       {skipAnimation === "forward" && (
         <div className="absolute right-[15%] top-1/2 -translate-y-1/2 translate-x-1/2 animate-ping">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white/20 backdrop-blur-sm">
-            <SkipForward size={28} className="text-white" />
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white/20 text-white backdrop-blur-sm">
+            <SkipBackIcon />
           </div>
         </div>
+      )}
+
+      {/* Skip Intro button — Netflix-style overlay, visible during intro range */}
+      {introEnd != null && introEnd > 0 && currentTime >= (introStart ?? 0) && currentTime < introEnd && (
+        <button
+          data-controls
+          onClick={(e) => {
+            e.stopPropagation();
+            const v = videoRef.current;
+            if (v) v.currentTime = introEnd;
+          }}
+          className="absolute bottom-24 right-8 z-20 rounded border border-white/40 bg-black/70 px-5 py-2 text-sm font-semibold text-white backdrop-blur-sm transition-all hover:bg-white hover:text-black"
+        >
+          Skip Intro
+        </button>
       )}
 
       {/* Controls overlay */}
@@ -882,7 +957,28 @@ export default function VideoPlayer({
           </div>
 
           {/* Controls row */}
-          <div className="flex items-center gap-1 sm:gap-1.5">
+          <div className="flex items-center gap-0.5 sm:gap-1">
+            {/* Previous episode — series only */}
+            {showEpisodesButton && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onPreviousEpisode?.(); }}
+                disabled={!hasPreviousEpisode}
+                className="rounded-full p-2 text-white transition-colors hover:bg-white/10 disabled:opacity-30"
+                title="Previous episode"
+              >
+                <ChevronLeft size={22} />
+              </button>
+            )}
+
+            {/* Skip back 10s */}
+            <button
+              onClick={() => skip(-10)}
+              className="rounded-full p-1.5 text-white transition-colors hover:bg-white/10"
+              title="Back 10s (←)"
+            >
+              <SkipForwardIcon />
+            </button>
+
             {/* Play/Pause */}
             <button
               onClick={togglePlay}
@@ -892,23 +988,26 @@ export default function VideoPlayer({
               {playing ? <Pause size={22} fill="white" /> : <Play size={22} className="ml-0.5" fill="white" />}
             </button>
 
-            {/* Skip back */}
-            <button
-              onClick={() => skip(-10)}
-              className="rounded-full p-2 text-white transition-colors hover:bg-white/10"
-              title="Back 10s (←)"
-            >
-              <SkipBack size={20} />
-            </button>
-
-            {/* Skip forward */}
+            {/* Skip forward 10s */}
             <button
               onClick={() => skip(10)}
-              className="rounded-full p-2 text-white transition-colors hover:bg-white/10"
+              className="rounded-full p-1.5 text-white transition-colors hover:bg-white/10"
               title="Forward 10s (→)"
             >
-              <SkipForward size={20} />
+              <SkipBackIcon />
             </button>
+
+            {/* Next episode — series only */}
+            {showEpisodesButton && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onNextEpisode?.(); }}
+                disabled={!hasNextEpisode}
+                className="rounded-full p-2 text-white transition-colors hover:bg-white/10 disabled:opacity-30"
+                title="Next episode"
+              >
+                <ChevronRight size={22} />
+              </button>
+            )}
 
             {/* Volume group */}
             <div
@@ -990,6 +1089,19 @@ export default function VideoPlayer({
               }`}>
                 {currentLevelHeight >= 2160 ? "4K" : currentLevelHeight >= 1440 ? "2K" : currentLevelHeight >= 1080 ? "FHD" : "HD"}
               </span>
+            )}
+
+            {/* Episodes button (series only) */}
+            {showEpisodesButton && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onEpisodesClick?.(); }}
+                className={`rounded px-2.5 py-1 text-xs font-semibold transition-colors hover:bg-white/10 ${
+                  externalPanelOpen ? "text-white" : "text-white/70"
+                }`}
+                title="Episodes"
+              >
+                Episodes
+              </button>
             )}
 
             {/* Settings button */}

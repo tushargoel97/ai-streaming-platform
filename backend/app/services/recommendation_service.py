@@ -2,12 +2,13 @@
 
 import logging
 import uuid
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.analytics import VideoReaction, WatchHistory
+from app.models.analytics import VideoReaction, ViewEvent, WatchHistory
 from app.models.recommendation import VideoEmbedding
 from app.models.video import Video
 
@@ -128,7 +129,30 @@ async def get_personalized_feed(
     if featured:
         sections.append({"title": "Featured", "videos": featured})
 
-    # 2. Trending (view_count based — always shown)
+    # 2. Top 10 this week (by ViewEvent count over last 7 days)
+    week_ago = datetime.utcnow() - timedelta(days=7)
+    top10_result = await db.execute(
+        select(Video)
+        .join(ViewEvent, ViewEvent.video_id == Video.id)
+        .where(Video.status == "ready", ViewEvent.created_at >= week_ago)
+        .group_by(Video.id)
+        .order_by(func.count(ViewEvent.id).desc())
+        .limit(10)
+    )
+    top10 = list(top10_result.scalars().all())
+    if not top10:
+        # Fallback: all-time top 10 by view_count when event data is sparse
+        top10_fallback = await db.execute(
+            select(Video)
+            .where(Video.status == "ready")
+            .order_by(Video.view_count.desc())
+            .limit(10)
+        )
+        top10 = list(top10_fallback.scalars().all())
+    if top10:
+        sections.append({"title": "Top 10 This Week", "videos": top10})
+
+    # 3. Trending (view_count based — always shown)
     trending_result = await db.execute(
         select(Video)
         .where(Video.status == "ready")
@@ -139,7 +163,7 @@ async def get_personalized_feed(
     if trending:
         sections.append({"title": "Trending Now", "videos": trending})
 
-    # 3. Recently added
+    # 4. Recently added
     recent_result = await db.execute(
         select(Video)
         .where(Video.status == "ready")
@@ -153,7 +177,7 @@ async def get_personalized_feed(
     if not user_id:
         return sections
 
-    # 4. "Continue Watching" — in-progress videos (> 0% and < 50%)
+    # 5. "Continue Watching" — in-progress videos (> 0% and < 50%)
     continue_result = await db.execute(
         select(Video)
         .join(WatchHistory, WatchHistory.video_id == Video.id)
@@ -173,12 +197,12 @@ async def get_personalized_feed(
     if continue_watching:
         sections.insert(0, {"title": "Continue Watching", "videos": continue_watching})
 
-    # 5. "Because You Watched" (collaborative, authenticated only)
+    # 6. "Because You Watched" (collaborative, authenticated only)
     collaborative = await get_because_you_watched(user_id, db, limit=limit)
     if collaborative:
         sections.append({"title": "Because You Watched", "videos": collaborative})
 
-    # 6. Personalized via embedding — average of liked/watched video embeddings
+    # 7. Personalized via embedding — average of liked/watched video embeddings
     personalized = await _get_embedding_personalized(user_id, db, limit=limit)
     if personalized:
         sections.append({"title": "Recommended For You", "videos": personalized})

@@ -8,6 +8,8 @@ export interface Video {
   thumbnail_path: string | null;
   manifest_path: string | null;
   preview_start_time: number | null;
+  intro_start: number | null;
+  intro_end: number | null;
   // Resolved URLs (from backend, ready to use directly)
   thumbnail_url: string;
   manifest_url: string;

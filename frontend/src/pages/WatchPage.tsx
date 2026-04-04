@@ -16,8 +16,9 @@ import { useAuthStore } from "@/stores/authStore";
 import { useWatchProgress } from "@/hooks/useWatchProgress";
 import { usePlayerSession } from "@/hooks/usePlayerSession";
 import VideoPlayer from "@/components/video/VideoPlayer";
+import EpisodesPanel from "@/components/video/EpisodesPanel";
 import CarouselRow from "@/components/video/CarouselRow";
-import type { Video, ReactionResponse } from "@/types/api";
+import type { Video, ReactionResponse, Season } from "@/types/api";
 import { formatDuration } from "@/lib/utils";
 
 // ── Episode navigation type ──────────────────────────────────────────────────
@@ -57,8 +58,13 @@ export default function WatchPage() {
   // Episode navigation
   const [adjacentEpisodes, setAdjacentEpisodes] = useState<AdjacentEpisodes>({ previous: null, next: null });
 
-  // Season episodes (for carousel)
+  // Season episodes (for panel + carousel)
   const [seasonEpisodes, setSeasonEpisodes] = useState<Video[]>([]);
+  const [currentSeason, setCurrentSeason] = useState<Season | null>(null);
+
+  // Episodes panel
+  const [episodesOpen, setEpisodesOpen] = useState(false);
+  const [autoNext, setAutoNext] = useState(true);
 
   // Recommendations
   const [recommended, setRecommended] = useState<Video[]>([]);
@@ -123,7 +129,7 @@ export default function WatchPage() {
           setAdjacentEpisodes(adj);
         } catch { /* ignore */ }
 
-        // Fetch all episodes in the same season (for carousel)
+        // Fetch all episodes in the same season + season details
         if (v.series_id && v.season_id) {
           try {
             const episodes = await api.get<Video[]>(
@@ -131,8 +137,14 @@ export default function WatchPage() {
             );
             setSeasonEpisodes(episodes);
           } catch { /* ignore */ }
+          try {
+            const series = await api.get<{ seasons?: Season[] }>(`/series/${v.series_id}`);
+            const season = series.seasons?.find((s) => s.id === v.season_id) ?? null;
+            setCurrentSeason(season);
+          } catch { /* ignore */ }
         } else {
           setSeasonEpisodes([]);
+          setCurrentSeason(null);
         }
 
         // Recommendations (AI-powered similarity)
@@ -190,11 +202,11 @@ export default function WatchPage() {
     if (id && isAuthenticated && video?.duration) {
       api.post(`/watchProgress/${id}`, { progress: video.duration }).catch(() => {});
     }
-    // Navigate to next episode if available
-    if (adjacentEpisodes.next) {
+    // Navigate to next episode if available and autoNext is on
+    if (autoNext && adjacentEpisodes.next) {
       navigate(`/watch/${adjacentEpisodes.next.id}`);
     }
-  }, [id, isAuthenticated, video?.duration, adjacentEpisodes.next, navigate]);
+  }, [id, isAuthenticated, video?.duration, autoNext, adjacentEpisodes.next, navigate]);
 
   // ── Watchlist toggle ─────────────────────────────────────────────────────
 
@@ -270,15 +282,38 @@ export default function WatchPage() {
     <div className="pt-16">
       {/* Player or Subscription Gate */}
       {hasAccess && video.manifest_url ? (
-        <VideoPlayer
-          manifestUrl={video.manifest_url}
-          posterUrl={video.thumbnail_url || undefined}
-          subtitleTracks={video.subtitle_tracks || []}
-          startTime={startTime}
-          autoPlay
-          onTimeUpdate={handleTimeUpdate}
-          onEnded={handleEnded}
-        />
+        <div className="relative">
+          <VideoPlayer
+            manifestUrl={video.manifest_url}
+            posterUrl={video.thumbnail_url || undefined}
+            subtitleTracks={video.subtitle_tracks || []}
+            startTime={startTime}
+            autoPlay
+            onTimeUpdate={handleTimeUpdate}
+            onEnded={handleEnded}
+            showEpisodesButton={seasonEpisodes.length > 1}
+            onEpisodesClick={() => setEpisodesOpen((o) => !o)}
+            externalPanelOpen={episodesOpen}
+            hasPreviousEpisode={!!adjacentEpisodes.previous}
+            hasNextEpisode={!!adjacentEpisodes.next}
+            onPreviousEpisode={() => adjacentEpisodes.previous && navigate(`/watch/${adjacentEpisodes.previous.id}`)}
+            onNextEpisode={() => adjacentEpisodes.next && navigate(`/watch/${adjacentEpisodes.next.id}`)}
+            introStart={video.intro_start}
+            introEnd={video.intro_end}
+          />
+          {episodesOpen && seasonEpisodes.length > 1 && (
+            <EpisodesPanel
+              episodes={seasonEpisodes}
+              currentVideoId={id!}
+              progress={episodeProgress}
+              seasonNumber={currentSeason?.season_number}
+              seasonDescription={currentSeason?.description}
+              autoNext={autoNext}
+              onAutoNextToggle={() => setAutoNext((n) => !n)}
+              onClose={() => setEpisodesOpen(false)}
+            />
+          )}
+        </div>
       ) : video.access && !video.access.has_access ? (
         <div className="relative flex aspect-video w-full items-center justify-center bg-black">
           {video.thumbnail_url && (

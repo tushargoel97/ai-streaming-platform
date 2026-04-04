@@ -321,6 +321,15 @@ async def _transcode_pipeline(video_id: uuid.UUID) -> None:
             await _publish_progress(video_id, 100, "completed")
             logger.info("Transcode completed for video %s", video_id)
 
+            # 11. Kick off intro detection as a separate background task
+            #     (runs after transcode so the video is already watchable)
+            try:
+                from app.worker.tasks import detect_intro
+                detect_intro.apply_async((str(video_id),), retry=False)
+                logger.info("Intro detection task queued for video %s", video_id)
+            except Exception:
+                logger.warning("Failed to queue intro detection for video %s", video_id, exc_info=True)
+
         except Exception as exc:
             logger.exception("Transcode failed for video %s", video_id)
             try:
