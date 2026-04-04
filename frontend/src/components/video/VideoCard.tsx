@@ -277,7 +277,7 @@ export default function VideoCard({
   ) => (
     <button
       onClick={onClick}
-      className={`flex h-8 w-8 items-center justify-center rounded-full border-2 transition-colors hover:border-white hover:text-white ${
+      className={`flex h-9 w-9 items-center justify-center rounded-full border-2 transition-colors hover:border-white hover:text-white ${
         active ? "border-white bg-white/20 text-white" : "border-gray-500 text-gray-400"
       }`}
       title={title}
@@ -319,24 +319,24 @@ export default function VideoCard({
             <div className="flex items-center gap-2">
               <button
                 onClick={handlePlay}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-black transition-transform hover:scale-110"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-black transition-transform hover:scale-110"
                 title="Play"
               >
-                <Play size={16} className="ml-0.5 fill-current" />
+                <Play size={18} className="ml-0.5 fill-current" />
               </button>
-              {circleBtn(inWatchlist === true, toggleWatchlist, inWatchlist ? <Check size={14} /> : <Plus size={14} />, inWatchlist ? "Remove from watchlist" : "Add to watchlist")}
-              {circleBtn(isLiked === true, toggleLike, <ThumbsUp size={14} className={isLiked ? "fill-current" : ""} />, isLiked ? "Unlike" : "Like")}
+              {circleBtn(inWatchlist === true, toggleWatchlist, inWatchlist ? <Check size={16} /> : <Plus size={16} />, inWatchlist ? "Remove from watchlist" : "Add to watchlist")}
+              {circleBtn(isLiked === true, toggleLike, <ThumbsUp size={16} className={isLiked ? "fill-current" : ""} />, isLiked ? "Unlike" : "Like")}
               <div className="flex-1" />
-              {circleBtn(false, handleMoreInfo, <ChevronDown size={14} />, "More info")}
+              {circleBtn(false, handleMoreInfo, <ChevronDown size={16} />, "More info")}
             </div>
-            <p className="mt-2 truncate text-sm font-semibold text-white">{video.title}</p>
-            <div className="mt-1.5 flex items-center gap-2 text-xs">
+            <p className="mt-2 truncate text-[15px] font-semibold text-white">{video.title}</p>
+            <div className="mt-1.5 flex items-center gap-2 text-[13px]">
               <span className={`rounded border px-1.5 py-0.5 font-medium ${ratingColor}`}>{ratingLabel}</span>
               {video.duration > 0 && <span className="text-gray-400">{formatDuration(video.duration)}</span>}
               {isHD && <span className="rounded border border-gray-500 px-1 py-0.5 text-[10px] font-semibold text-gray-400">HD</span>}
             </div>
             {video.tags.length > 0 && (
-              <p className="mt-1.5 truncate text-xs text-gray-400">{video.tags.slice(0, 3).join(" · ")}</p>
+              <p className="mt-1.5 truncate text-[13px] text-gray-400">{video.tags.slice(0, 3).join(" · ")}</p>
             )}
           </div>
         </div>,
@@ -378,7 +378,7 @@ export default function VideoCard({
 
             {/* Bottom gradient + title overlay */}
             <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent pt-10 pb-2.5 px-2.5">
-              <p className="truncate text-[11px] font-semibold text-white drop-shadow">
+              <p className="truncate text-[13px] font-semibold text-white drop-shadow">
                 {video.title}
               </p>
             </div>
@@ -438,10 +438,10 @@ export default function VideoCard({
           )}
           {progressBar}
         </div>
-        <p className="mt-1.5 truncate text-sm font-medium leading-snug group-hover:text-[var(--primary)]">
+        <p className="mt-1.5 truncate text-[15px] font-medium leading-snug group-hover:text-[var(--primary)]">
           {video.title}
         </p>
-        <p className="text-xs text-gray-500">
+        <p className="text-[13px] text-gray-500">
           {watchCount != null && watchCount > 0
             ? `Watched ${watchCount} ${watchCount === 1 ? "time" : "times"}`
             : `${video.view_count.toLocaleString()} views`}

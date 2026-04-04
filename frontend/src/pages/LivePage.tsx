@@ -46,7 +46,7 @@ export default function LivePage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center pt-16">
+      <div className="flex min-h-screen items-center justify-center pt-[72px]">
         <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
       </div>
     );
@@ -54,7 +54,7 @@ export default function LivePage() {
 
   if (error || !stream) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4 pt-16 text-gray-400">
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 pt-[72px] text-gray-400">
         <AlertTriangle size={48} className="opacity-50" />
         <p>{error || "Stream not found"}</p>
         <Link to="/" className="text-sm text-[var(--primary)] hover:underline">
@@ -88,7 +88,7 @@ export default function LivePage() {
   };
 
   return (
-    <div className="pt-16">
+    <div className="pt-[72px]">
       <div className="flex flex-col lg:flex-row">
         {/* Player + Info */}
         <div className="flex-1">

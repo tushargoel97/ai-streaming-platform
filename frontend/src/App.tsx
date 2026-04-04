@@ -30,11 +30,13 @@ import AdminAISettings from "@/pages/admin/AISettingsPage";
 export default function App() {
   return (
     <Routes>
+      {/* Watch page — no navbar, full-screen player */}
+      <Route path="/watch/:id" element={<WatchPage />} />
+
       {/* Public routes */}
       <Route element={<AppShell />}>
         <Route path="/" element={<HomePage />} />
         <Route path="/browse" element={<BrowsePage />} />
-        <Route path="/watch/:id" element={<WatchPage />} />
         <Route path="/series/:id" element={<SeriesPage />} />
         <Route path="/talent/:id" element={<TalentPage />} />
         <Route path="/live" element={<LiveDirectoryPage />} />

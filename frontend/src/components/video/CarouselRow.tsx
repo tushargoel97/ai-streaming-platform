@@ -68,18 +68,18 @@ export default function CarouselRow({
               TOP 10
             </span>
             <div className="mb-1.5 flex flex-col leading-snug">
-              <span className="text-[11px] font-bold uppercase tracking-[0.35em] text-white/40">
+              <span className="text-[13px] font-bold uppercase tracking-[0.35em] text-white/40">
                 Content
               </span>
-              <span className="text-[11px] font-bold uppercase tracking-[0.35em] text-white/40">
+              <span className="text-[13px] font-bold uppercase tracking-[0.35em] text-white/40">
                 Today
               </span>
             </div>
           </div>
         ) : (
           /* Standard row header with red left accent */
-          <h2 className="flex items-center gap-3 text-xl font-semibold">
-            <span className="h-5 w-1 rounded-full bg-red-500" />
+          <h2 className="flex items-center gap-3 text-2xl font-semibold">
+            <span className="h-6 w-1.5 rounded-full bg-red-500" />
             {title}
           </h2>
         )}
@@ -96,8 +96,8 @@ export default function CarouselRow({
               background: "linear-gradient(to right, var(--bg) 20%, transparent 100%)",
             }}
           >
-            <div className="flex h-9 w-9 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur-sm transition-all hover:bg-black/80 hover:scale-110">
-              <ChevronLeft size={20} />
+            <div className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur-sm transition-all hover:bg-black/80 hover:scale-110">
+              <ChevronLeft size={24} />
             </div>
           </button>
         )}
@@ -111,8 +111,8 @@ export default function CarouselRow({
               background: "linear-gradient(to left, var(--bg) 20%, transparent 100%)",
             }}
           >
-            <div className="flex h-9 w-9 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur-sm transition-all hover:bg-black/80 hover:scale-110">
-              <ChevronRight size={20} />
+            <div className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur-sm transition-all hover:bg-black/80 hover:scale-110">
+              <ChevronRight size={24} />
             </div>
           </button>
         )}

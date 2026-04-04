@@ -45,7 +45,7 @@ export default function ProfilePage() {
 
   if (!user) {
     return (
-      <div className="flex min-h-screen items-center justify-center pt-16">
+      <div className="flex min-h-screen items-center justify-center pt-[72px]">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-white border-t-transparent" />
       </div>
     );

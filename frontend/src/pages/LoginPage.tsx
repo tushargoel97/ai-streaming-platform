@@ -70,7 +70,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center pt-16">
+    <div className="flex min-h-screen items-center justify-center pt-[72px]">
       <div className="w-full max-w-md rounded-lg bg-[var(--card)] p-8">
         <h1 className="mb-6 text-2xl font-bold">Sign In</h1>
 

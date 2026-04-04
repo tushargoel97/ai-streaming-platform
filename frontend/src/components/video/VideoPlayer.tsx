@@ -18,13 +18,14 @@ import {
   Languages,
   Gauge,
   MonitorPlay,
+  ArrowLeft,
 } from "lucide-react";
 
 // ── Skip arc icons (cineby-style) ────────────────────────────────────────────
 
 function SkipBackIcon() {
   return (
-    <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+    <svg width="32" height="32" viewBox="0 0 26 26" fill="none">
       {/* Counter-clockwise arc */}
       <path
         d="M13 4 A9 9 0 1 0 21.5 17"
@@ -45,7 +46,7 @@ function SkipBackIcon() {
 
 function SkipForwardIcon() {
   return (
-    <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+    <svg width="32" height="32" viewBox="0 0 26 26" fill="none">
       {/* Clockwise arc */}
       <path
         d="M13 4 A9 9 0 1 1 4.5 17"
@@ -99,6 +100,11 @@ export interface VideoPlayerProps {
   onNextEpisode?: () => void;
   introStart?: number | null;
   introEnd?: number | null;
+  // Paused info overlay
+  title?: string;
+  description?: string;
+  episodeLabel?: string; // e.g. "Season 2 · Episode 4 · 45m"
+  onBack?: () => void;
 }
 
 type SettingsPanel = "main" | "quality" | "speed" | "audio-subs";
@@ -122,6 +128,10 @@ export default function VideoPlayer({
   onNextEpisode,
   introStart = null,
   introEnd = null,
+  title,
+  description,
+  episodeLabel,
+  onBack,
 }: VideoPlayerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -842,7 +852,7 @@ export default function VideoPlayer({
   return (
     <div
       ref={containerRef}
-      className="group relative aspect-video w-full overflow-hidden bg-black"
+      className="group relative h-full w-full overflow-hidden bg-black"
       onMouseMove={resetHideTimer}
       onClick={(e) => {
         if ((e.target as HTMLElement).closest("[data-controls]")) return;
@@ -877,6 +887,30 @@ export default function VideoPlayer({
         </button>
       )}
 
+      {/* Paused info overlay — bottom-left, fades in when paused */}
+      {!playing && !loading && (title || description) && (
+        <div className="pointer-events-none absolute bottom-24 left-0 right-0 px-10 pb-2">
+          <div
+            className="max-w-lg"
+            style={{ animation: "fadeInUp 0.25s ease both" }}
+          >
+            <p className="mb-1 text-xs font-bold uppercase tracking-widest text-white">
+              You're watching
+            </p>
+            {title && (
+              <h2 className="text-2xl font-black leading-tight text-white drop-shadow-lg">
+                {title}
+              </h2>
+            )}
+            {description && (
+              <p className="mt-1.5 line-clamp-2 text-sm leading-relaxed text-white/70">
+                {description}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Skip animation overlays */}
       {skipAnimation === "back" && (
         <div className="absolute left-[15%] top-1/2 -translate-x-1/2 -translate-y-1/2 animate-ping">
@@ -908,6 +942,20 @@ export default function VideoPlayer({
         </button>
       )}
 
+      {/* Back button — fades with controls */}
+      {onBack && (
+        <button
+          data-controls
+          onClick={(e) => { e.stopPropagation(); onBack(); }}
+          title="Back"
+          className={`absolute left-5 top-5 z-20 flex h-11 w-11 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm transition-all duration-300 hover:bg-black/80 ${
+            showControls || anyPanelOpen ? "opacity-100" : "pointer-events-none opacity-0"
+          }`}
+        >
+          <ArrowLeft size={24} />
+        </button>
+      )}
+
       {/* Controls overlay */}
       <div
         data-controls
@@ -918,46 +966,54 @@ export default function VideoPlayer({
         {/* Gradient */}
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
 
-        <div className="relative px-3 pb-3 pt-20 sm:px-5">
-          {/* Progress bar */}
-          <div
-            ref={progressRef}
-            className={`group/progress relative mb-3 cursor-pointer transition-all ${
-              progressHover || isDragging ? "h-[6px]" : "h-[3px]"
-            }`}
-            onMouseDown={handleProgressMouseDown}
-            onMouseMove={handleProgressHover}
-            onMouseLeave={handleProgressLeave}
-            onMouseEnter={() => setProgressHover(true)}
-          >
-            {/* Track background */}
-            <div className="absolute inset-0 rounded-full bg-white/20" />
-            {/* Buffered */}
+        <div className="relative px-5 pb-5 pt-24 sm:px-8">
+          {/* Progress bar + time */}
+          <div className="mb-4 flex items-center gap-4">
             <div
-              className="absolute left-0 top-0 h-full rounded-full bg-white/30"
-              style={{ width: `${bufferedPct}%` }}
-            />
-            {/* Played */}
-            <div
-              className="absolute left-0 top-0 h-full rounded-full bg-red-600"
-              style={{ width: `${progressPct}%` }}
-            />
-            {/* Seek dot */}
-            <div
-              className={`absolute top-1/2 h-[14px] w-[14px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-600 shadow-md transition-transform ${
-                progressHover || isDragging ? "scale-100" : "scale-0"
+              ref={progressRef}
+              className={`group/progress relative flex-1 cursor-pointer transition-all ${
+                progressHover || isDragging ? "h-[7px]" : "h-[4px]"
               }`}
-              style={{ left: `${progressPct}%` }}
-            />
-            {/* Seek preview tooltip */}
-            <div
-              ref={seekPreviewRef}
-              className="absolute -top-9 hidden -translate-x-1/2 rounded-md bg-black/95 px-2.5 py-1 text-xs font-medium text-white shadow-lg"
-            />
+              onMouseDown={handleProgressMouseDown}
+              onMouseMove={handleProgressHover}
+              onMouseLeave={handleProgressLeave}
+              onMouseEnter={() => setProgressHover(true)}
+            >
+              {/* Track background */}
+              <div className="absolute inset-0 rounded-full bg-white/20" />
+              {/* Buffered */}
+              <div
+                className="absolute left-0 top-0 h-full rounded-full bg-white/30"
+                style={{ width: `${bufferedPct}%` }}
+              />
+              {/* Played */}
+              <div
+                className="absolute left-0 top-0 h-full rounded-full bg-red-600"
+                style={{ width: `${progressPct}%` }}
+              />
+              {/* Seek dot — white, always visible */}
+              <div
+                className={`absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-md transition-all duration-150 ${
+                  progressHover || isDragging ? "h-[16px] w-[16px]" : "h-[12px] w-[12px]"
+                }`}
+                style={{ left: `${progressPct}%` }}
+              />
+              {/* Seek preview tooltip */}
+              <div
+                ref={seekPreviewRef}
+                className="absolute -top-9 hidden -translate-x-1/2 rounded-md bg-black/95 px-2.5 py-1 text-xs font-medium text-white shadow-lg"
+              />
+            </div>
+            {/* Time — right of progress bar */}
+            <span className="flex-shrink-0 select-none text-[15px] font-medium tabular-nums text-white/90">
+              {formatTime(currentTime)}
+              <span className="mx-1 text-white/40">/</span>
+              {formatTime(duration)}
+            </span>
           </div>
 
           {/* Controls row */}
-          <div className="flex items-center gap-0.5 sm:gap-1">
+          <div className="flex items-center gap-1 sm:gap-2">
             {/* Previous episode — series only */}
             {showEpisodesButton && (
               <button
@@ -966,14 +1022,14 @@ export default function VideoPlayer({
                 className="rounded-full p-2 text-white transition-colors hover:bg-white/10 disabled:opacity-30"
                 title="Previous episode"
               >
-                <ChevronLeft size={22} />
+                <ChevronLeft size={26} />
               </button>
             )}
 
             {/* Skip back 10s */}
             <button
               onClick={() => skip(-10)}
-              className="rounded-full p-1.5 text-white transition-colors hover:bg-white/10"
+              className="rounded-full p-2 text-white transition-colors hover:bg-white/10"
               title="Back 10s (←)"
             >
               <SkipForwardIcon />
@@ -982,16 +1038,16 @@ export default function VideoPlayer({
             {/* Play/Pause */}
             <button
               onClick={togglePlay}
-              className="rounded-full p-2 text-white transition-colors hover:bg-white/10"
+              className="rounded-full p-2.5 text-white transition-colors hover:bg-white/10"
               title={playing ? "Pause (k)" : "Play (k)"}
             >
-              {playing ? <Pause size={22} fill="white" /> : <Play size={22} className="ml-0.5" fill="white" />}
+              {playing ? <Pause size={28} fill="white" /> : <Play size={28} className="ml-0.5" fill="white" />}
             </button>
 
             {/* Skip forward 10s */}
             <button
               onClick={() => skip(10)}
-              className="rounded-full p-1.5 text-white transition-colors hover:bg-white/10"
+              className="rounded-full p-2 text-white transition-colors hover:bg-white/10"
               title="Forward 10s (→)"
             >
               <SkipBackIcon />
@@ -1005,7 +1061,7 @@ export default function VideoPlayer({
                 className="rounded-full p-2 text-white transition-colors hover:bg-white/10 disabled:opacity-30"
                 title="Next episode"
               >
-                <ChevronRight size={22} />
+                <ChevronRight size={26} />
               </button>
             )}
 
@@ -1021,7 +1077,7 @@ export default function VideoPlayer({
                 className="rounded-full p-2 text-white transition-colors hover:bg-white/10"
                 title={muted ? "Unmute (m)" : "Mute (m)"}
               >
-                <VolumeIcon size={22} />
+                <VolumeIcon size={26} />
               </button>
               <div
                 className={`overflow-hidden transition-all duration-200 ${
@@ -1039,13 +1095,6 @@ export default function VideoPlayer({
                 />
               </div>
             </div>
-
-            {/* Time display */}
-            <span className="ml-1.5 select-none text-[13px] font-medium tabular-nums text-white/90">
-              {formatTime(currentTime)}
-              <span className="mx-1 text-white/40">/</span>
-              {formatTime(duration)}
-            </span>
 
             <div className="flex-1" />
 
@@ -1065,7 +1114,7 @@ export default function VideoPlayer({
               }`}
               title={`Subtitles (c)${activeSubtitle ? " — On" : " — Off"}`}
             >
-              <Subtitles size={20} />
+              <Subtitles size={24} />
               {activeSubtitle && (
                 <span className="absolute bottom-1 left-1/2 h-[2px] w-4 -translate-x-1/2 rounded-full bg-red-600" />
               )}
@@ -1095,7 +1144,7 @@ export default function VideoPlayer({
             {showEpisodesButton && (
               <button
                 onClick={(e) => { e.stopPropagation(); onEpisodesClick?.(); }}
-                className={`rounded px-2.5 py-1 text-xs font-semibold transition-colors hover:bg-white/10 ${
+                className={`rounded px-3 py-1.5 text-sm font-semibold transition-colors hover:bg-white/10 ${
                   externalPanelOpen ? "text-white" : "text-white/70"
                 }`}
                 title="Episodes"
@@ -1113,7 +1162,7 @@ export default function VideoPlayer({
                 }`}
                 title="Settings"
               >
-                <Settings size={20} />
+                <Settings size={24} />
               </button>
 
               {/* Settings panel */}
@@ -1133,7 +1182,7 @@ export default function VideoPlayer({
               className="rounded-full p-2 text-white transition-colors hover:bg-white/10"
               title="Fullscreen (f)"
             >
-              {fullscreen ? <Minimize size={20} /> : <Maximize size={20} />}
+              {fullscreen ? <Minimize size={24} /> : <Maximize size={24} />}
             </button>
           </div>
         </div>

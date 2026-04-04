@@ -94,7 +94,7 @@ export default function SeriesPage() {
   };
 
   return (
-    <div className="pt-16">
+    <div className="pt-[72px]">
       {/* Series banner */}
       <div
         className="relative flex h-80 items-end bg-gradient-to-t from-black to-gray-800 px-12 pb-8"
