@@ -237,9 +237,10 @@ export default function VideosPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("");
 
-  // Categories & Tenants
+  // Categories, Tenants & Subscription Tiers
   const [categories, setCategories] = useState<Category[]>([]);
   const [tenants, setTenants] = useState<AdminTenant[]>([]);
+  const [subscriptionTiers, setSubscriptionTiers] = useState<{ id: string; name: string; tier_level: number; slug: string; tenant_id: string }[]>([]);
 
   // Upload state
   const [showUpload, setShowUpload] = useState(false);
@@ -322,10 +323,11 @@ export default function VideosPage() {
     fetchVideos();
   }, [fetchVideos]);
 
-  // Fetch categories and tenants for dropdowns
+  // Fetch categories, tenants and subscription tiers for dropdowns
   useEffect(() => {
     api.get<Category[]>("/admin/categories").then(setCategories).catch(() => {});
     api.get<{ items: AdminTenant[] }>("/admin/tenants").then((d) => setTenants(d.items)).catch(() => {});
+    api.get<{ items: { id: string; name: string; tier_level: number; slug: string; tenant_id: string }[] }>("/admin/subscriptions/tiers").then((d) => setSubscriptionTiers(d.items)).catch(() => {});
   }, []);
 
   // Upload handlers
@@ -596,6 +598,7 @@ export default function VideosPage() {
                 <th className="px-4 py-3">Title</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Classification</th>
+                <th className="px-4 py-3">Tenants</th>
                 <th className="px-4 py-3">Size</th>
                 <th className="px-4 py-3">Duration</th>
                 <th className="px-4 py-3">Views</th>
@@ -647,6 +650,22 @@ export default function VideosPage() {
                       }`}>
                         {v.content_classification}
                       </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {v.tenant_ids && v.tenant_ids.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {v.tenant_ids.map((tid) => {
+                            const tenant = tenants.find((t) => t.id === tid);
+                            return tenant ? (
+                              <span key={tid} className="rounded bg-blue-500/20 px-1.5 py-0.5 text-[11px] font-medium text-blue-300">
+                                {tenant.site_name}
+                              </span>
+                            ) : null;
+                          })}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-gray-600">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-gray-400">{formatBytes(v.file_size || 0)}</td>
                     <td className="px-4 py-3 text-gray-400">{formatDuration(v.duration)}</td>
@@ -905,18 +924,36 @@ export default function VideosPage() {
                 )}
               </div>
 
-              {/* Min Tier Level */}
+              {/* Min Subscription Tier */}
               <div>
-                <label className="mb-1 block text-xs text-gray-400">
-                  Min Subscription Tier Level (0 = free)
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  value={uploadMinTierLevel}
-                  onChange={(e) => setUploadMinTierLevel(Number(e.target.value))}
-                  className="w-32 rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
-                />
+                <label className="mb-1 block text-xs text-gray-400">Min Subscription Tier</label>
+                {(() => {
+                  const relevantTiers = [...subscriptionTiers]
+                    .filter((t) => uploadTenantIds.length === 0 || uploadTenantIds.includes(t.tenant_id))
+                    .sort((a, b) => a.tier_level - b.tier_level);
+                  return (
+                    <>
+                      <select
+                        value={uploadMinTierLevel}
+                        onChange={(e) => setUploadMinTierLevel(Number(e.target.value))}
+                        className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
+                      >
+                        <option value={0}>Free (all users)</option>
+                        {relevantTiers.map((tier) => {
+                          const tenant = tenants.find((t) => t.id === tier.tenant_id);
+                          return (
+                            <option key={tier.id} value={tier.tier_level}>
+                              {tier.name} (Level {tier.tier_level}){tenant ? ` — ${tenant.site_name}` : ""}
+                            </option>
+                          );
+                        })}
+                      </select>
+                      {uploadTenantIds.length === 0 && subscriptionTiers.length > 0 && (
+                        <p className="mt-1 text-[11px] text-gray-500">Select tenants above to filter available tiers.</p>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
 
               {/* Progress bar */}
@@ -1088,18 +1125,36 @@ export default function VideosPage() {
                 )}
               </div>
 
-              {/* Min Tier Level */}
+              {/* Min Subscription Tier */}
               <div>
-                <label className="mb-1 block text-xs text-gray-400">
-                  Min Subscription Tier Level (0 = free)
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  value={editMinTierLevel}
-                  onChange={(e) => setEditMinTierLevel(Number(e.target.value))}
-                  className="w-32 rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
-                />
+                <label className="mb-1 block text-xs text-gray-400">Min Subscription Tier</label>
+                {(() => {
+                  const relevantTiers = [...subscriptionTiers]
+                    .filter((t) => editTenantIds.length === 0 || editTenantIds.includes(t.tenant_id))
+                    .sort((a, b) => a.tier_level - b.tier_level);
+                  return (
+                    <>
+                      <select
+                        value={editMinTierLevel}
+                        onChange={(e) => setEditMinTierLevel(Number(e.target.value))}
+                        className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
+                      >
+                        <option value={0}>Free (all users)</option>
+                        {relevantTiers.map((tier) => {
+                          const tenant = tenants.find((t) => t.id === tier.tenant_id);
+                          return (
+                            <option key={tier.id} value={tier.tier_level}>
+                              {tier.name} (Level {tier.tier_level}){tenant ? ` — ${tenant.site_name}` : ""}
+                            </option>
+                          );
+                        })}
+                      </select>
+                      {editTenantIds.length === 0 && subscriptionTiers.length > 0 && (
+                        <p className="mt-1 text-[11px] text-gray-500">Select tenants above to filter available tiers.</p>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
 
               <div className="flex justify-end gap-2 pt-2">

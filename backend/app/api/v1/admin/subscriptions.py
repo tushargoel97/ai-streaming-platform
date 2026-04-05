@@ -16,6 +16,7 @@ from app.models.subscription import (
     SeasonPass,
     SeasonPassConfig,
     SubscriptionTier,
+    SubscriptionTierPrice,
     UserSubscription,
 )
 from app.models.user import User
@@ -27,34 +28,38 @@ router = APIRouter(prefix="/admin/subscriptions", tags=["admin-subscriptions"])
 # ── Schemas ──────────────────────────────────────────────────────────────────
 
 
+class TierPriceInput(BaseModel):
+    """One price point in a create/update payload."""
+    currency: str = "USD"
+    regions: list[str] = []          # empty = global default
+    price_monthly: Decimal = Decimal("0")
+    price_yearly: Decimal = Decimal("0")
+    gateway_price_id_monthly: str | None = None
+    gateway_price_id_yearly: str | None = None
+    is_default: bool = False
+    sort_order: int = 0
+
+
 class TierCreate(BaseModel):
     name: str
     slug: str
     tier_level: int = 0
-    price_monthly: Decimal = Decimal("0")
-    price_yearly: Decimal = Decimal("0")
-    currency: str = "USD"
-    gateway_price_id_monthly: str | None = None
-    gateway_price_id_yearly: str | None = None
     description: str = ""
     features: dict | None = None
     is_active: bool = True
     sort_order: int = 0
+    prices: list[TierPriceInput] = []
 
 
 class TierUpdate(BaseModel):
     name: str | None = None
     slug: str | None = None
     tier_level: int | None = None
-    price_monthly: Decimal | None = None
-    price_yearly: Decimal | None = None
-    currency: str | None = None
-    gateway_price_id_monthly: str | None = None
-    gateway_price_id_yearly: str | None = None
     description: str | None = None
     features: dict | None = None
     is_active: bool | None = None
     sort_order: int | None = None
+    prices: list[TierPriceInput] | None = None  # if provided, replaces all prices
 
 
 class GrantSubscription(BaseModel):
@@ -92,6 +97,20 @@ class SeasonPassConfigUpdate(BaseModel):
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
+def _serialize_price(p: SubscriptionTierPrice) -> dict:
+    return {
+        "id": str(p.id),
+        "currency": p.currency,
+        "regions": p.regions or [],
+        "price_monthly": str(p.price_monthly),
+        "price_yearly": str(p.price_yearly),
+        "gateway_price_id_monthly": p.gateway_price_id_monthly,
+        "gateway_price_id_yearly": p.gateway_price_id_yearly,
+        "is_default": p.is_default,
+        "sort_order": p.sort_order,
+    }
+
+
 def _serialize_tier(t: SubscriptionTier) -> dict:
     return {
         "id": str(t.id),
@@ -99,15 +118,11 @@ def _serialize_tier(t: SubscriptionTier) -> dict:
         "name": t.name,
         "slug": t.slug,
         "tier_level": t.tier_level,
-        "price_monthly": str(t.price_monthly),
-        "price_yearly": str(t.price_yearly),
-        "currency": t.currency,
-        "gateway_price_id_monthly": t.gateway_price_id_monthly,
-        "gateway_price_id_yearly": t.gateway_price_id_yearly,
         "description": t.description,
         "features": t.features,
         "is_active": t.is_active,
         "sort_order": t.sort_order,
+        "prices": [_serialize_price(p) for p in (t.prices or [])],
         "created_at": t.created_at.isoformat() if t.created_at else None,
         "updated_at": t.updated_at.isoformat() if t.updated_at else None,
     }
@@ -163,8 +178,12 @@ async def list_tiers(
     tenant_id: uuid.UUID | None = None,
 ):
     tid = tenant_id or get_tenant_id()
-    query = select(SubscriptionTier).where(SubscriptionTier.tenant_id == tid)
-    query = query.order_by(SubscriptionTier.sort_order, SubscriptionTier.tier_level)
+    query = (
+        select(SubscriptionTier)
+        .where(SubscriptionTier.tenant_id == tid)
+        .options(selectinload(SubscriptionTier.prices))
+        .order_by(SubscriptionTier.sort_order, SubscriptionTier.tier_level)
+    )
     result = await db.execute(query)
     tiers = result.scalars().all()
     return {"items": [_serialize_tier(t) for t in tiers]}
@@ -194,11 +213,6 @@ async def create_tier(
         name=body.name,
         slug=body.slug,
         tier_level=body.tier_level,
-        price_monthly=body.price_monthly,
-        price_yearly=body.price_yearly,
-        currency=body.currency,
-        gateway_price_id_monthly=body.gateway_price_id_monthly,
-        gateway_price_id_yearly=body.gateway_price_id_yearly,
         description=body.description,
         features=body.features or {},
         is_active=body.is_active,
@@ -206,6 +220,22 @@ async def create_tier(
     )
     db.add(tier)
     await db.flush()
+
+    for i, p in enumerate(body.prices):
+        db.add(SubscriptionTierPrice(
+            tier_id=tier.id,
+            currency=p.currency.upper(),
+            regions=[r.upper() for r in p.regions],
+            price_monthly=p.price_monthly,
+            price_yearly=p.price_yearly,
+            gateway_price_id_monthly=p.gateway_price_id_monthly,
+            gateway_price_id_yearly=p.gateway_price_id_yearly,
+            is_default=p.is_default,
+            sort_order=p.sort_order if p.sort_order else i,
+        ))
+
+    await db.flush()
+    await db.refresh(tier, ["prices"])
     return _serialize_tier(tier)
 
 
@@ -216,12 +246,17 @@ async def update_tier(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_admin),
 ):
-    result = await db.execute(select(SubscriptionTier).where(SubscriptionTier.id == tier_id))
+    result = await db.execute(
+        select(SubscriptionTier)
+        .where(SubscriptionTier.id == tier_id)
+        .options(selectinload(SubscriptionTier.prices))
+    )
     tier = result.scalar_one_or_none()
     if not tier:
         raise HTTPException(status_code=404, detail="Tier not found")
 
     update_data = body.model_dump(exclude_unset=True)
+    prices_input = update_data.pop("prices", None)
 
     # Check slug uniqueness if changing
     if "slug" in update_data and update_data["slug"] != tier.slug:
@@ -237,8 +272,27 @@ async def update_tier(
     for field, value in update_data.items():
         setattr(tier, field, value)
 
+    # Replace all prices if provided
+    if prices_input is not None:
+        for old_price in list(tier.prices):
+            await db.delete(old_price)
+        await db.flush()
+        for i, p in enumerate(prices_input):
+            db.add(SubscriptionTierPrice(
+                tier_id=tier.id,
+                currency=p["currency"].upper(),
+                regions=[r.upper() for r in p.get("regions", [])],
+                price_monthly=p["price_monthly"],
+                price_yearly=p["price_yearly"],
+                gateway_price_id_monthly=p.get("gateway_price_id_monthly"),
+                gateway_price_id_yearly=p.get("gateway_price_id_yearly"),
+                is_default=p.get("is_default", False),
+                sort_order=p.get("sort_order", i),
+            ))
+
     tier.updated_at = datetime.utcnow()
     await db.flush()
+    await db.refresh(tier, ["prices"])
     return _serialize_tier(tier)
 
 

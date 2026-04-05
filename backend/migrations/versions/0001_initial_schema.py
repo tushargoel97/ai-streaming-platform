@@ -485,11 +485,6 @@ def upgrade() -> None:
         sa.Column("name", sa.String(100), nullable=False),
         sa.Column("slug", sa.String(100), nullable=False),
         sa.Column("tier_level", sa.Integer(), nullable=False),
-        sa.Column("price_monthly", sa.Numeric(10, 2), server_default="0", nullable=False),
-        sa.Column("price_yearly", sa.Numeric(10, 2), server_default="0", nullable=False),
-        sa.Column("currency", sa.String(3), server_default="USD", nullable=False),
-        sa.Column("gateway_price_id_monthly", sa.String(255), nullable=True),
-        sa.Column("gateway_price_id_yearly", sa.String(255), nullable=True),
         sa.Column("description", sa.Text(), server_default="", nullable=False),
         sa.Column("features", postgresql.JSONB(astext_type=sa.Text()), server_default="{}", nullable=False),
         sa.Column("is_active", sa.Boolean(), server_default="true", nullable=False),
@@ -500,6 +495,24 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("tenant_id", "slug"),
     )
+
+    op.create_table(
+        "subscription_tier_prices",
+        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("tier_id", sa.UUID(), nullable=False),
+        sa.Column("currency", sa.String(3), server_default="USD", nullable=False),
+        sa.Column("regions", postgresql.JSONB(astext_type=sa.Text()), server_default="[]", nullable=False),
+        sa.Column("price_monthly", sa.Numeric(10, 2), server_default="0", nullable=False),
+        sa.Column("price_yearly", sa.Numeric(10, 2), server_default="0", nullable=False),
+        sa.Column("gateway_price_id_monthly", sa.String(255), nullable=True),
+        sa.Column("gateway_price_id_yearly", sa.String(255), nullable=True),
+        sa.Column("is_default", sa.Boolean(), server_default="false", nullable=False),
+        sa.Column("sort_order", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.ForeignKeyConstraint(["tier_id"], ["subscription_tiers.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index("ix_subscription_tier_prices_tier_id", "subscription_tier_prices", ["tier_id"])
 
     op.create_table(
         "user_subscriptions",
@@ -596,6 +609,8 @@ def downgrade() -> None:
     op.drop_table("season_pass_configs")
     op.drop_table("ppv_purchases")
     op.drop_table("user_subscriptions")
+    op.drop_index("ix_subscription_tier_prices_tier_id", "subscription_tier_prices")
+    op.drop_table("subscription_tier_prices")
     op.drop_table("subscription_tiers")
     op.drop_index("idx_reactions_user", table_name="video_reactions")
     op.drop_index("idx_reactions_video", table_name="video_reactions")

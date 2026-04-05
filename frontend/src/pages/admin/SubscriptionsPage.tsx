@@ -1,12 +1,24 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Search, Trash2, Edit3, Plus, X, Loader2,
-  Crown, Users, CalendarRange, Gift, Ban,
+  Crown, Users, CalendarRange, Globe, Gift, Ban,
 } from "lucide-react";
 import { api } from "@/api/client";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 
 // ── Types ────────────────────────────────────────────────────────────────────
+
+interface TierPrice {
+  id?: string;
+  currency: string;
+  regions: string[];          // empty = global default
+  price_monthly: string;
+  price_yearly: string;
+  gateway_price_id_monthly: string;
+  gateway_price_id_yearly: string;
+  is_default: boolean;
+  sort_order: number;
+}
 
 interface SubscriptionTier {
   id: string;
@@ -14,13 +26,9 @@ interface SubscriptionTier {
   name: string;
   slug: string;
   tier_level: number;
-  price_monthly: string;
-  price_yearly: string;
-  currency: string;
-  gateway_price_id_monthly: string | null;
-  gateway_price_id_yearly: string | null;
   description: string;
   features: Record<string, boolean>;
+  prices: TierPrice[];
   is_active: boolean;
   sort_order: number;
   created_at: string | null;
@@ -115,24 +123,33 @@ export default function SubscriptionsPage() {
 
 function TiersTab() {
   const [tiers, setTiers] = useState<SubscriptionTier[]>([]);
+  const [tenants, setTenants] = useState<{ id: string; site_name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<SubscriptionTier | null>(null);
   const [saving, setSaving] = useState(false);
 
   // Form fields
+  const [formTenantId, setFormTenantId] = useState("");
   const [formName, setFormName] = useState("");
   const [formSlug, setFormSlug] = useState("");
   const [formTierLevel, setFormTierLevel] = useState(0);
-  const [formPriceMonthly, setFormPriceMonthly] = useState("0");
-  const [formPriceYearly, setFormPriceYearly] = useState("0");
-  const [formCurrency, setFormCurrency] = useState("USD");
   const [formDescription, setFormDescription] = useState("");
   const [formFeatures, setFormFeatures] = useState<Record<string, boolean>>({});
   const [formIsActive, setFormIsActive] = useState(true);
   const [formSortOrder, setFormSortOrder] = useState(0);
-  const [formGatewayPriceMonthly, setFormGatewayPriceMonthly] = useState("");
-  const [formGatewayPriceYearly, setFormGatewayPriceYearly] = useState("");
+  const [formPrices, setFormPrices] = useState<TierPrice[]>([]);
+
+  const emptyPrice = (): TierPrice => ({
+    currency: "USD",
+    regions: [],
+    price_monthly: "0",
+    price_yearly: "0",
+    gateway_price_id_monthly: "",
+    gateway_price_id_yearly: "",
+    is_default: false,
+    sort_order: 0,
+  });
 
   // Confirm dialog
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -152,42 +169,60 @@ function TiersTab() {
 
   useEffect(() => {
     fetchTiers();
+    api.get<{ items: { id: string; site_name: string }[] }>("/admin/tenants").then((d) => setTenants(d.items)).catch(() => {});
   }, [fetchTiers]);
 
   const slugify = (text: string) =>
     text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 
+  const fmtPrice = (amount: string | number, currency: string) => {
+    const n = Number(amount);
+    try {
+      return new Intl.NumberFormat("en", {
+        style: "currency",
+        currency: currency || "USD",
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(n);
+    } catch {
+      return `${currency} ${n.toFixed(2)}`;
+    }
+  };
+
   const openCreate = () => {
     setEditing(null);
+    setFormTenantId(tenants[0]?.id || "");
     setFormName("");
     setFormSlug("");
     setFormTierLevel(tiers.length);
-    setFormPriceMonthly("0");
-    setFormPriceYearly("0");
-    setFormCurrency("USD");
     setFormDescription("");
     setFormFeatures({});
     setFormIsActive(true);
     setFormSortOrder(tiers.length);
-    setFormGatewayPriceMonthly("");
-    setFormGatewayPriceYearly("");
+    setFormPrices([{ ...emptyPrice(), is_default: true }]);
     setShowModal(true);
   };
 
   const openEdit = (tier: SubscriptionTier) => {
     setEditing(tier);
+    setFormTenantId(tier.tenant_id);
     setFormName(tier.name);
     setFormSlug(tier.slug);
     setFormTierLevel(tier.tier_level);
-    setFormPriceMonthly(tier.price_monthly);
-    setFormPriceYearly(tier.price_yearly);
-    setFormCurrency(tier.currency);
     setFormDescription(tier.description);
     setFormFeatures(tier.features || {});
     setFormIsActive(tier.is_active);
     setFormSortOrder(tier.sort_order);
-    setFormGatewayPriceMonthly(tier.gateway_price_id_monthly || "");
-    setFormGatewayPriceYearly(tier.gateway_price_id_yearly || "");
+    setFormPrices(
+      (tier.prices || []).map((p) => ({
+        ...p,
+        price_monthly: String(p.price_monthly),
+        price_yearly: String(p.price_yearly),
+        gateway_price_id_monthly: p.gateway_price_id_monthly || "",
+        gateway_price_id_yearly: p.gateway_price_id_yearly || "",
+        regions: p.regions || [],
+      }))
+    );
     setShowModal(true);
   };
 
@@ -196,18 +231,22 @@ function TiersTab() {
     setSaving(true);
 
     const payload = {
+      tenant_id: formTenantId,
       name: formName,
       slug: formSlug || slugify(formName),
       tier_level: formTierLevel,
-      price_monthly: formPriceMonthly,
-      price_yearly: formPriceYearly,
-      currency: formCurrency,
       description: formDescription,
       features: formFeatures,
       is_active: formIsActive,
       sort_order: formSortOrder,
-      gateway_price_id_monthly: formGatewayPriceMonthly || null,
-      gateway_price_id_yearly: formGatewayPriceYearly || null,
+      prices: formPrices.map((p, i) => ({
+        ...p,
+        price_monthly: parseFloat(p.price_monthly) || 0,
+        price_yearly: parseFloat(p.price_yearly) || 0,
+        gateway_price_id_monthly: p.gateway_price_id_monthly || null,
+        gateway_price_id_yearly: p.gateway_price_id_yearly || null,
+        sort_order: i,
+      })),
     };
 
     try {
@@ -223,6 +262,26 @@ function TiersTab() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const updatePrice = (idx: number, patch: Partial<TierPrice>) => {
+    setFormPrices((prev) => prev.map((p, i) => (i === idx ? { ...p, ...patch } : p)));
+  };
+
+  const setDefaultPrice = (idx: number) => {
+    setFormPrices((prev) => prev.map((p, i) => ({ ...p, is_default: i === idx })));
+  };
+
+  const removePrice = (idx: number) => {
+    setFormPrices((prev) => {
+      const removed = prev[idx];
+      const next = prev.filter((_, i) => i !== idx);
+      // if we removed the default and there's still a row, make the first one default
+      if (removed?.is_default && next.length > 0) {
+        next[0] = { ...next[0]!, is_default: true };
+      }
+      return next;
+    });
   };
 
   const requestDelete = (tier: SubscriptionTier) => {
@@ -272,9 +331,9 @@ function TiersTab() {
             <thead className="border-b border-[var(--border)] text-xs uppercase text-gray-400">
               <tr>
                 <th className="px-4 py-3">Name</th>
+                <th className="px-4 py-3">Tenant</th>
                 <th className="px-4 py-3">Level</th>
-                <th className="px-4 py-3">Monthly</th>
-                <th className="px-4 py-3">Yearly</th>
+                <th className="px-4 py-3">Pricing</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Features</th>
                 <th className="px-4 py-3 text-right">Actions</th>
@@ -293,22 +352,47 @@ function TiersTab() {
                     )}
                   </td>
                   <td className="px-4 py-3">
+                    {(() => {
+                      const tenant = tenants.find((t) => t.id === tier.tenant_id);
+                      return tenant ? (
+                        <span className="rounded bg-blue-500/20 px-2 py-0.5 text-xs font-medium text-blue-300">
+                          {tenant.site_name}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-600">—</span>
+                      );
+                    })()}
+                  </td>
+                  <td className="px-4 py-3">
                     <span className="inline-flex items-center rounded-full bg-blue-500/20 px-2 py-0.5 text-xs font-medium text-blue-400">
                       {tier.tier_level}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-gray-300">
-                    {Number(tier.price_monthly) === 0 ? (
-                      <span className="text-green-400">Free</span>
+                  <td className="px-4 py-3">
+                    {(tier.prices || []).length === 0 ? (
+                      <span className="text-xs text-gray-600">—</span>
                     ) : (
-                      `${tier.currency} ${tier.price_monthly}`
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-gray-300">
-                    {Number(tier.price_yearly) === 0 ? (
-                      <span className="text-green-400">Free</span>
-                    ) : (
-                      `${tier.currency} ${tier.price_yearly}`
+                      <div className="space-y-1">
+                        {tier.prices.map((p, i) => (
+                          <div key={i} className="flex flex-wrap items-center gap-1.5 text-xs">
+                            {Number(p.price_monthly) === 0 ? (
+                              <span className="text-green-400">Free</span>
+                            ) : (
+                              <span className="text-gray-300">
+                                {fmtPrice(p.price_monthly, p.currency)}/mo
+                              </span>
+                            )}
+                            {p.regions && p.regions.length > 0 && (
+                              <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-gray-400">
+                                {p.regions.join(", ")}
+                              </span>
+                            )}
+                            {p.is_default && (
+                              <span className="rounded bg-blue-500/20 px-1.5 py-0.5 text-[10px] text-blue-400">default</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </td>
                   <td className="px-4 py-3">
@@ -322,11 +406,13 @@ function TiersTab() {
                       {tier.is_active ? "Active" : "Inactive"}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-xs text-gray-400 max-w-[200px] truncate">
-                    {Object.entries(tier.features || {})
-                      .filter(([, v]) => v)
-                      .map(([k]) => k)
-                      .join(", ") || "—"}
+                  <td className="px-4 py-3 text-xs text-gray-400 max-w-[200px]">
+                    <div className="truncate">
+                      {Object.entries(tier.features || {})
+                        .filter(([, v]) => v)
+                        .map(([k]) => k)
+                        .join(", ") || "—"}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-1">
@@ -356,7 +442,7 @@ function TiersTab() {
       {/* Create/Edit Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-lg bg-[var(--card)] p-6">
+          <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg bg-[var(--card)] p-6">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-bold">{editing ? "Edit Tier" : "Create Tier"}</h2>
               <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-white">
@@ -364,6 +450,25 @@ function TiersTab() {
               </button>
             </div>
             <form onSubmit={handleSave} className="space-y-4">
+              <div>
+                <label className="mb-1 block text-xs text-gray-400">Tenant *</label>
+                <select
+                  value={formTenantId}
+                  onChange={(e) => setFormTenantId(e.target.value)}
+                  required
+                  disabled={!!editing}
+                  className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)] disabled:opacity-60"
+                >
+                  <option value="">Select a tenant...</option>
+                  {tenants.map((t) => (
+                    <option key={t.id} value={t.id}>{t.site_name}</option>
+                  ))}
+                </select>
+                {editing && (
+                  <p className="mt-1 text-[11px] text-gray-500">Tenant cannot be changed after creation.</p>
+                )}
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="mb-1 block text-xs text-gray-400">Name *</label>
@@ -389,7 +494,7 @@ function TiersTab() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="mb-1 block text-xs text-gray-400">Tier Level</label>
                   <input
@@ -397,39 +502,6 @@ function TiersTab() {
                     value={formTierLevel}
                     onChange={(e) => setFormTierLevel(Number(e.target.value))}
                     min={0}
-                    className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-gray-400">Price Monthly</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formPriceMonthly}
-                    onChange={(e) => setFormPriceMonthly(e.target.value)}
-                    className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-gray-400">Price Yearly</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formPriceYearly}
-                    onChange={(e) => setFormPriceYearly(e.target.value)}
-                    className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="mb-1 block text-xs text-gray-400">Currency</label>
-                  <input
-                    type="text"
-                    value={formCurrency}
-                    onChange={(e) => setFormCurrency(e.target.value.toUpperCase())}
-                    maxLength={3}
                     className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
                   />
                 </div>
@@ -504,27 +576,151 @@ function TiersTab() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="mb-1 block text-xs text-gray-400">Price ID (Monthly)</label>
-                  <input
-                    type="text"
-                    value={formGatewayPriceMonthly}
-                    onChange={(e) => setFormGatewayPriceMonthly(e.target.value)}
-                    placeholder="price_..."
-                    className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
-                  />
+              {/* Pricing */}
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <label className="flex items-center gap-1.5 text-xs font-medium text-gray-300">
+                    <Globe size={13} />
+                    Pricing
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFormPrices((prev) => [
+                        ...prev,
+                        { ...emptyPrice(), sort_order: prev.length },
+                      ])
+                    }
+                    className="flex items-center gap-1 rounded bg-white/10 px-2 py-1 text-[11px] text-gray-300 hover:bg-white/20"
+                  >
+                    <Plus size={11} /> Add Price
+                  </button>
                 </div>
-                <div>
-                  <label className="mb-1 block text-xs text-gray-400">Price ID (Yearly)</label>
-                  <input
-                    type="text"
-                    value={formGatewayPriceYearly}
-                    onChange={(e) => setFormGatewayPriceYearly(e.target.value)}
-                    placeholder="price_..."
-                    className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
-                  />
-                </div>
+
+                {formPrices.length === 0 ? (
+                  <p className="rounded border border-dashed border-[var(--border)] py-3 text-center text-[11px] text-gray-600">
+                    No prices yet. Add at least one price row.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {formPrices.map((p, idx) => (
+                      <div
+                        key={idx}
+                        className={`rounded border bg-[var(--secondary)] p-3 ${
+                          p.is_default ? "border-[var(--primary)]/50" : "border-[var(--border)]"
+                        }`}
+                      >
+                        {/* Row header */}
+                        <div className="mb-2 flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setDefaultPrice(idx)}
+                              title="Set as default"
+                              className={`flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                                p.is_default
+                                  ? "bg-[var(--primary)] text-white"
+                                  : "bg-white/10 text-gray-400 hover:bg-white/20"
+                              }`}
+                            >
+                              {p.is_default ? "Default" : "Set default"}
+                            </button>
+                            {p.regions.length === 0 ? (
+                              <span className="text-[10px] text-gray-500">Global fallback</span>
+                            ) : (
+                              <span className="text-[10px] text-blue-400">{p.regions.join(", ")}</span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removePrice(idx)}
+                            className="rounded p-1 text-gray-500 hover:text-red-400"
+                          >
+                            <X size={13} />
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <label className="mb-0.5 block text-[10px] text-gray-500">Currency</label>
+                            <input
+                              type="text"
+                              value={p.currency}
+                              maxLength={3}
+                              placeholder="USD"
+                              onChange={(e) => updatePrice(idx, { currency: e.target.value.toUpperCase() })}
+                              className="w-full rounded border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 text-xs text-white outline-none focus:border-[var(--primary)]"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-0.5 block text-[10px] text-gray-500">Monthly</label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={p.price_monthly}
+                              onChange={(e) => updatePrice(idx, { price_monthly: e.target.value })}
+                              className="w-full rounded border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 text-xs text-white outline-none focus:border-[var(--primary)]"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-0.5 block text-[10px] text-gray-500">Yearly</label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={p.price_yearly}
+                              onChange={(e) => updatePrice(idx, { price_yearly: e.target.value })}
+                              className="w-full rounded border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 text-xs text-white outline-none focus:border-[var(--primary)]"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="mt-2 grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="mb-0.5 block text-[10px] text-gray-500">Regions (ISO codes, comma-separated)</label>
+                            <input
+                              type="text"
+                              value={p.regions.join(", ")}
+                              placeholder="IN, GB, AU — leave blank for global"
+                              onChange={(e) =>
+                                updatePrice(idx, {
+                                  regions: e.target.value
+                                    .split(",")
+                                    .map((s) => s.trim().toUpperCase())
+                                    .filter(Boolean),
+                                })
+                              }
+                              className="w-full rounded border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 text-xs text-white outline-none focus:border-[var(--primary)]"
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="mb-0.5 block text-[10px] text-gray-500">Gateway ID (Monthly)</label>
+                              <input
+                                type="text"
+                                value={p.gateway_price_id_monthly}
+                                placeholder="price_..."
+                                onChange={(e) => updatePrice(idx, { gateway_price_id_monthly: e.target.value })}
+                                className="w-full rounded border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 text-xs text-white outline-none focus:border-[var(--primary)]"
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-0.5 block text-[10px] text-gray-500">Gateway ID (Yearly)</label>
+                              <input
+                                type="text"
+                                value={p.gateway_price_id_yearly}
+                                placeholder="price_..."
+                                onChange={(e) => updatePrice(idx, { gateway_price_id_yearly: e.target.value })}
+                                className="w-full rounded border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 text-xs text-white outline-none focus:border-[var(--primary)]"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center gap-2">

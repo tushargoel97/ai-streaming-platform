@@ -4,14 +4,16 @@ from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import String, Text, Integer, Boolean, ForeignKey, Numeric, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
 
 class SubscriptionTier(Base):
-    """Per-tenant subscription tier (e.g., Free, Basic, Premium)."""
+    """Per-tenant subscription tier (e.g., Free, Basic, Premium).
+    Pricing lives in SubscriptionTierPrice — one tier, many prices across currencies/regions.
+    """
     __tablename__ = "subscription_tiers"
     __table_args__ = (UniqueConstraint("tenant_id", "slug"),)
 
@@ -22,12 +24,6 @@ class SubscriptionTier(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     slug: Mapped[str] = mapped_column(String(100), nullable=False)
     tier_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    price_monthly: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
-    price_yearly: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
-    currency: Mapped[str] = mapped_column(String(3), default="USD")
-    # Provider-specific price identifiers (Stripe price_id, Razorpay plan_id, PayPal plan_id)
-    gateway_price_id_monthly: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    gateway_price_id_yearly: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     description: Mapped[str] = mapped_column(Text, default="")
     features: Mapped[dict] = mapped_column(JSONB, default=dict)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -36,6 +32,35 @@ class SubscriptionTier(Base):
     updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
 
     tenant: Mapped["Tenant"] = relationship()
+    prices: Mapped[list["SubscriptionTierPrice"]] = relationship(
+        back_populates="tier", cascade="all, delete-orphan", order_by="SubscriptionTierPrice.sort_order"
+    )
+
+
+class SubscriptionTierPrice(Base):
+    """A price point for a subscription tier.
+    One tier can have many prices in different currencies / for different regions.
+    regions = [] means global default (applies when no region-specific price matches).
+    """
+    __tablename__ = "subscription_tier_prices"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tier_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("subscription_tiers.id", ondelete="CASCADE"), nullable=False
+    )
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    # ISO 3166-1 alpha-2 country codes this price applies to. Empty = global default.
+    regions: Mapped[list] = mapped_column(JSONB, default=list)
+    price_monthly: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
+    price_yearly: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
+    # Payment gateway price IDs (Stripe price_id, Razorpay plan_id, etc.)
+    gateway_price_id_monthly: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    gateway_price_id_yearly: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+
+    tier: Mapped["SubscriptionTier"] = relationship(back_populates="prices")
 
 
 class UserSubscription(Base):

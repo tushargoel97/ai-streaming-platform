@@ -8,7 +8,7 @@ from app.models.live import LiveStream
 from app.models.transcode import TranscodeJob
 from app.models.analytics import WatchHistory, ViewEvent, Watchlist, VideoReaction
 from app.models.recommendation import VideoEmbedding
-from app.models.subscription import SubscriptionTier, UserSubscription, PPVPurchase, SeasonPassConfig, SeasonPass
+from app.models.subscription import SubscriptionTier, SubscriptionTierPrice, UserSubscription, PPVPurchase, SeasonPassConfig, SeasonPass
 from app.models.tournament import Competition
 from app.models.match import Event, EventHighlight
 from app.models.ai_settings import AISettings
@@ -24,7 +24,7 @@ __all__ = [
     "TranscodeJob",
     "WatchHistory", "ViewEvent", "Watchlist", "VideoReaction",
     "VideoEmbedding",
-    "SubscriptionTier", "UserSubscription", "PPVPurchase", "SeasonPassConfig", "SeasonPass",
+    "SubscriptionTier", "SubscriptionTierPrice", "UserSubscription", "PPVPurchase", "SeasonPassConfig", "SeasonPass",
     "Competition",
     "Event", "EventHighlight",
     "AISettings",
