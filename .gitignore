@@ -17,8 +17,9 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# Root-only: avoid ignoring app source dirs like frontend/src/lib/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -28,6 +29,9 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+
+# TypeScript incremental build cache (from `tsc -b` / composite projects)
+*.tsbuildinfo
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
