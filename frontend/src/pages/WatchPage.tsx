@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { Loader2, Lock, CreditCard } from "lucide-react";
+import { Loader2, Lock, CreditCard, ArrowLeft } from "lucide-react";
 import { api } from "@/api/client";
 import { useAuthStore } from "@/stores/authStore";
 import { useWatchProgress } from "@/hooks/useWatchProgress";
@@ -68,21 +68,20 @@ export default function WatchPage() {
 
     const fetchData = async () => {
       try {
-        const v = await api.get<Video>(`/videos/${id}`);
-        setVideo(v);
+        // Fetch video + resume position in parallel so startTime is set
+        // before VideoPlayer mounts (avoids race where HLS fires before progress arrives)
+        const [v, progressMap] = await Promise.all([
+          api.get<Video>(`/videos/${id}`),
+          isAuthenticated
+            ? api.get<Record<string, { progress: number }>>("/watchProgress", { video_ids: id }).catch(() => ({} as Record<string, { progress: number }>))
+            : Promise.resolve({} as Record<string, { progress: number }>),
+        ]);
 
-        // Get resume position
-        if (isAuthenticated) {
-          try {
-            const progressMap = await api.get<Record<string, { progress: number }>>("/watchProgress", {
-              video_ids: id,
-            });
-            const entry = progressMap[id];
-            if (entry && entry.progress > 5) {
-              setStartTime(entry.progress);
-            }
-          } catch { /* ignore */ }
+        const entry = progressMap[id];
+        if (entry && entry.progress > 5) {
+          setStartTime(entry.progress);
         }
+        setVideo(v);
 
         // Episode navigation (for series episodes)
         try {

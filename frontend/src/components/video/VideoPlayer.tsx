@@ -130,7 +130,6 @@ export default function VideoPlayer({
   introEnd = null,
   title,
   description,
-  episodeLabel,
   onBack,
 }: VideoPlayerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -353,6 +352,18 @@ export default function VideoPlayer({
       el.removeEventListener("ended", onEndedHandler);
     };
   }, [onTimeUpdate, onEnded]);
+
+  // ── Seek to startTime if it arrives after HLS is already initialised ───────
+  // (safety-net for the race between progress fetch and HLS MANIFEST_PARSED)
+  useEffect(() => {
+    if (!startTime || startTime <= 0) return;
+    const el = videoRef.current;
+    if (!el) return;
+    // HAVE_METADATA (readyState >= 1) means we can seek
+    if (el.readyState >= 1) {
+      el.currentTime = startTime;
+    }
+  }, [startTime]);
 
   // ── Controls auto-hide ─────────────────────────────────────────────────────
 

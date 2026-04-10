@@ -252,14 +252,21 @@ export default function VideoCard({
   const hasProgress = progressPercent != null && progressPercent > 0;
   const totalMins = video.duration > 0 ? Math.round(video.duration / 60) : 0;
   const watchedMins = progressSeconds != null ? Math.round(progressSeconds / 60) : 0;
-  const showTimeLabel = hasProgress && totalMins > 0;
+  const showTimeLabel = hasProgress && totalMins > 0 && watchedMins > 0;
+
+  const fmtMins = (mins: number) => {
+    if (mins < 60) return `${mins}m`;
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  };
 
   const progressBar = hasProgress ? (
     <div className="absolute bottom-0 left-0 right-0">
       {showTimeLabel && (
         <div className="flex justify-end px-1.5 pb-0.5">
           <span className="rounded bg-black/80 px-1.5 py-0.5 text-[10px] font-medium text-gray-300">
-            {watchedMins} of {totalMins}m
+            {fmtMins(watchedMins)} of {fmtMins(totalMins)}
           </span>
         </div>
       )}
