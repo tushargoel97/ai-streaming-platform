@@ -1,35 +1,26 @@
-import random
+import secrets
 import smtplib
 import string
 from email.message import EmailMessage
 
-import redis.asyncio as aioredis
-
 from app.config import settings
+from app.database import redis_pool
 
 
 async def generate_otp(email: str) -> str:
     """Generate OTP, store in Redis, and return it."""
-    code = "".join(random.choices(string.digits, k=settings.otp_length))
-    r = aioredis.from_url(settings.redis_url)
-    try:
-        await r.setex(f"otp:{email}", settings.otp_expire_minutes * 60, code)
-    finally:
-        await r.aclose()
+    code = "".join(secrets.choice(string.digits) for _ in range(settings.otp_length))
+    await redis_pool.setex(f"otp:{email}", settings.otp_expire_minutes * 60, code)
     return code
 
 
 async def verify_otp(email: str, code: str) -> bool:
     """Verify OTP against Redis store."""
-    r = aioredis.from_url(settings.redis_url)
-    try:
-        stored = await r.get(f"otp:{email}")
-        if stored and stored.decode() == code:
-            await r.delete(f"otp:{email}")
-            return True
-        return False
-    finally:
-        await r.aclose()
+    stored = await redis_pool.get(f"otp:{email}")
+    if stored and stored == code:
+        await redis_pool.delete(f"otp:{email}")
+        return True
+    return False
 
 
 async def send_otp_email(email: str, code: str) -> None:

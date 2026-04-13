@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -60,8 +60,8 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
         existing_user.password_hash = hash_password(body.password)
         if body.display_name:
             existing_user.display_name = body.display_name
-        existing_user.last_login_at = datetime.utcnow()
-        existing_user.updated_at = datetime.utcnow()
+        existing_user.last_login_at = datetime.now(timezone.utc)
+        existing_user.updated_at = datetime.now(timezone.utc)
         db.add(existing_user)
 
         return TokenResponse(
@@ -81,7 +81,7 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
         display_name=body.display_name or body.username,
         role="viewer",
         auth_provider="local",
-        last_login_at=datetime.utcnow(),
+        last_login_at=datetime.now(timezone.utc),
     )
     db.add(user)
     await db.flush()
@@ -130,7 +130,7 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
             detail="Provide either password or otp",
         )
 
-    user.last_login_at = datetime.utcnow()
+    user.last_login_at = datetime.now(timezone.utc)
 
     return TokenResponse(
         access_token=create_access_token(user.id, user.role),
@@ -196,7 +196,7 @@ async def update_profile(
     if body.avatar_url is not None:
         user.avatar_url = body.avatar_url
 
-    user.updated_at = datetime.utcnow()
+    user.updated_at = datetime.now(timezone.utc)
     db.add(user)
 
     return user
@@ -211,8 +211,11 @@ async def change_password(
     if not user.password_hash or not verify_password(body.current_password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
 
+    if len(body.new_password) < 6:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="New password must be at least 6 characters")
+
     user.password_hash = hash_password(body.new_password)
-    user.updated_at = datetime.utcnow()
+    user.updated_at = datetime.now(timezone.utc)
     db.add(user)
 
     return {"message": "Password changed successfully"}
@@ -284,7 +287,7 @@ async def _handle_oauth_user(
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled")
 
-    user.last_login_at = datetime.utcnow()
+    user.last_login_at = datetime.now(timezone.utc)
     await db.flush()
 
     access_token = create_access_token(user.id, user.role)

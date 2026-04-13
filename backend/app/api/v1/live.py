@@ -13,7 +13,7 @@ import os
 import shutil
 import uuid
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from sqlalchemy import select, func
@@ -208,7 +208,7 @@ async def on_publish(
     _generate_master_playlist(name)
 
     stream.status = "live"
-    stream.started_at = datetime.utcnow()
+    stream.started_at = datetime.now(timezone.utc)
     stream.ended_at = None
     stream.viewer_count = 0
     stream.manifest_path = f"live/{name}/master.m3u8"
@@ -232,7 +232,7 @@ async def on_publish_done(
 
     if stream and stream.status == "live":
         stream.status = "ended"
-        stream.ended_at = datetime.utcnow()
+        stream.ended_at = datetime.now(timezone.utc)
 
     # Clean up segments (they're ephemeral for live)
     _cleanup_live_segments(name)

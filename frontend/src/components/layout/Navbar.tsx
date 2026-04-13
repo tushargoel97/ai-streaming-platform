@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { Search, User as UserIcon, Lock, LogOut, Shield, Bookmark } from "lucide-react";
+import { Search, User as UserIcon, Lock, LogOut, Shield, Bookmark, Menu, X } from "lucide-react";
 import { useTenantStore } from "@/stores/tenantStore";
 import { useAuthStore } from "@/stores/authStore";
 import SearchOverlay from "@/components/search/SearchOverlay";
@@ -9,6 +9,7 @@ export default function Navbar() {
   const config = useTenantStore((s) => s.config);
   const { user, isAuthenticated, logout } = useAuthStore();
   const [open, setOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -116,7 +117,7 @@ export default function Navbar() {
           </div>
         </div>
 
-        {/* Right: search + user */}
+        {/* Right: search + user + mobile menu */}
         <div className="relative z-10 flex items-center gap-3">
           <button
             onClick={() => setSearchOpen(true)}
@@ -124,6 +125,14 @@ export default function Navbar() {
             title="Search (Ctrl+K)"
           >
             <Search size={21} />
+          </button>
+
+          {/* Mobile hamburger */}
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="flex h-10 w-10 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-white/10 hover:text-white md:hidden"
+          >
+            {mobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
           </button>
 
           {isAuthenticated ? (
@@ -193,6 +202,28 @@ export default function Navbar() {
           ) : null}
         </div>
       </nav>
+
+      {/* Mobile navigation drawer */}
+      {mobileMenuOpen && (
+        <div className="fixed inset-x-0 top-[72px] z-40 border-b border-white/10 bg-[#0a0a0a]/98 backdrop-blur-md md:hidden">
+          <div className="flex flex-col gap-1 px-4 py-3">
+            <Link to="/" onClick={() => setMobileMenuOpen(false)}
+              className="rounded px-3 py-2.5 text-[15px] text-gray-300 transition-colors hover:bg-white/5 hover:text-white">
+              Home
+            </Link>
+            <Link to="/browse" onClick={() => setMobileMenuOpen(false)}
+              className="rounded px-3 py-2.5 text-[15px] text-gray-300 transition-colors hover:bg-white/5 hover:text-white">
+              Browse
+            </Link>
+            {config?.features?.live_streaming && (
+              <Link to="/live" onClick={() => setMobileMenuOpen(false)}
+                className="rounded px-3 py-2.5 text-[15px] text-gray-300 transition-colors hover:bg-white/5 hover:text-white">
+                Live
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
 
       <SearchOverlay open={searchOpen} onClose={() => setSearchOpen(false)} />
     </>

@@ -2,8 +2,7 @@ import { useState, useEffect } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 import { ApiError } from "@/api/client";
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8080/api/v1";
+import { API_URL } from "@/lib/constants";
 
 type LoginMethod = "password" | "otp";
 
@@ -136,8 +135,9 @@ export default function LoginPage() {
           {error && <p className="text-sm text-red-500">{error}</p>}
 
           <div>
-            <label className="mb-1 block text-xs text-gray-400">Email or Username</label>
+            <label htmlFor="login-identifier" className="mb-1 block text-xs text-gray-400">Email or Username</label>
             <input
+              id="login-identifier"
               type="text"
               placeholder="Enter email or username"
               value={identifier}
@@ -149,8 +149,9 @@ export default function LoginPage() {
 
           {method === "password" ? (
             <div>
-              <label className="mb-1 block text-xs text-gray-400">Password</label>
+              <label htmlFor="login-password" className="mb-1 block text-xs text-gray-400">Password</label>
               <input
+                id="login-password"
                 type="password"
                 placeholder="Enter password"
                 value={password}
@@ -161,9 +162,10 @@ export default function LoginPage() {
             </div>
           ) : (
             <div>
-              <label className="mb-1 block text-xs text-gray-400">One-Time Password</label>
+              <label htmlFor="login-otp" className="mb-1 block text-xs text-gray-400">One-Time Password</label>
               <div className="flex gap-2">
                 <input
+                  id="login-otp"
                   type="text"
                   placeholder="Enter 6-digit code"
                   value={otp}

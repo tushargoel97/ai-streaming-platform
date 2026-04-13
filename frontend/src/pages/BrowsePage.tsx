@@ -279,7 +279,7 @@ export default function BrowsePage() {
   return (
     <div className="min-h-screen pt-20 pb-12">
       {/* ── Header ─────────────────────────────────────────── */}
-      <div className="px-12">
+      <div className="px-4 sm:px-8 lg:px-12">
         <div className="flex items-end justify-between gap-6">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Browse</h1>
@@ -341,7 +341,7 @@ export default function BrowsePage() {
       </div>
 
       {/* ── Category tabs ──────────────────────────────────── */}
-      <div className="mt-5 px-12">
+      <div className="mt-5 px-4 sm:px-8 lg:px-12">
         <CategoryBar categories={categories} active={currentCategory} onChange={(id) => setFilter("category", id)} />
       </div>
 
@@ -384,12 +384,12 @@ export default function BrowsePage() {
       </div>
 
       {/* ── Active pills ───────────────────────────────────── */}
-      <div className="mt-4 px-12">
+      <div className="mt-4 px-4 sm:px-8 lg:px-12">
         <ActivePills params={searchParams} categories={categories} onRemove={removeFilter} onClear={clearAll} />
       </div>
 
       {/* ── Results ────────────────────────────────────────── */}
-      <div className="mt-6 px-12">
+      <div className="mt-6 px-4 sm:px-8 lg:px-12">
         {loading ? (
           <div className="flex items-center justify-center py-32">
             <Loader2 className="h-8 w-8 animate-spin text-gray-400" />

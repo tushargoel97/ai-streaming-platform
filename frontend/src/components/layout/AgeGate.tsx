@@ -68,6 +68,11 @@ function DobGate({ siteName, onVerified }: { siteName: string; onVerified: () =>
     }
 
     const dob = new Date(y, m - 1, d);
+    // Validate the date is real (e.g., reject Feb 31)
+    if (dob.getFullYear() !== y || dob.getMonth() !== m - 1 || dob.getDate() !== d) {
+      setError("Please enter a valid date of birth.");
+      return;
+    }
     const now = new Date();
     let age = now.getFullYear() - dob.getFullYear();
     const monthDiff = now.getMonth() - dob.getMonth();
@@ -96,7 +101,7 @@ function DobGate({ siteName, onVerified }: { siteName: string; onVerified: () =>
           age.
         </p>
 
-        <div className="mb-4 flex gap-3">
+        <div className="mb-4 flex gap-3" onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}>
           <div className="flex-1">
             <label className="mb-1 block text-xs text-gray-500">Month</label>
             <input

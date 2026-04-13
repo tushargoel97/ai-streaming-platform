@@ -8,7 +8,7 @@ import { usePlayerSession } from "@/hooks/usePlayerSession";
 import VideoPlayer from "@/components/video/VideoPlayer";
 import EpisodesPanel from "@/components/video/EpisodesPanel";
 import type { Video, Season } from "@/types/api";
-import { formatDuration } from "@/lib/utils";
+
 
 // ── Episode navigation type ──────────────────────────────────────────────────
 
@@ -89,19 +89,16 @@ export default function WatchPage() {
           setAdjacentEpisodes(adj);
         } catch { /* ignore */ }
 
-        // Fetch all episodes in the same season + season details
         if (v.series_id && v.season_id) {
-          try {
-            const episodes = await api.get<Video[]>(
+          const [episodes, series] = await Promise.all([
+            api.get<Video[]>(
               `/series/${v.series_id}/seasons/${v.season_id}/episodes`,
-            );
-            setSeasonEpisodes(episodes);
-          } catch { /* ignore */ }
-          try {
-            const series = await api.get<{ seasons?: Season[] }>(`/series/${v.series_id}`);
-            const season = series.seasons?.find((s) => s.id === v.season_id) ?? null;
-            setCurrentSeason(season);
-          } catch { /* ignore */ }
+            ).catch(() => [] as Video[]),
+            api.get<{ seasons?: Season[] }>(`/series/${v.series_id}`)
+              .catch(() => ({ seasons: [] as Season[] })),
+          ]);
+          setSeasonEpisodes(episodes);
+          setCurrentSeason(series.seasons?.find((s) => s.id === v.season_id) ?? null);
         } else {
           setSeasonEpisodes([]);
           setCurrentSeason(null);
@@ -206,19 +203,6 @@ export default function WatchPage() {
             onBack={() => navigate(-1)}
             title={video.title}
             description={video.description || undefined}
-            episodeLabel={
-              video.series_id && video.episode_number != null
-                ? [
-                    currentSeason ? `Season ${currentSeason.season_number}` : null,
-                    `Episode ${video.episode_number}`,
-                    video.duration > 0 ? formatDuration(video.duration) : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")
-                : video.duration > 0
-                  ? formatDuration(video.duration)
-                  : undefined
-            }
           />
           {episodesOpen && seasonEpisodes.length > 1 && (
             <EpisodesPanel

@@ -7,7 +7,7 @@ without polling.
 
 import asyncio
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
@@ -33,11 +33,11 @@ async def feed_updates_sse(request: Request):
     """
 
     async def event_stream():
-        last_check = datetime.utcnow()
+        last_check = datetime.now(timezone.utc).replace(tzinfo=None)
 
         while True:
             try:
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
                 since = last_check - timedelta(seconds=5)  # small overlap to avoid gaps
 
                 async with async_session() as db:

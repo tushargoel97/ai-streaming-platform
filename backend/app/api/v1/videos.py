@@ -9,7 +9,7 @@ from app.auth.permissions import optional_user
 from app.database import get_db
 from app.models.subscription import UserSubscription
 from app.models.user import User
-from app.models.video import Video
+from app.models.video import Video, VideoCategory
 from app.schemas.video import VideoListResponse, VideoResponse
 from app.storage.urls import resolve_media_url
 
@@ -34,7 +34,11 @@ async def list_videos(
     base = select(Video).where(Video.status == "ready")
 
     if category_id:
-        base = base.where(Video.category_id == category_id)
+        base = base.where(
+            Video.id.in_(
+                select(VideoCategory.video_id).where(VideoCategory.category_id == category_id)
+            )
+        )
 
     if search:
         base = base.where(Video.title.ilike(f"%{search}%"))

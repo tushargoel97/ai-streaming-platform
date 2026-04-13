@@ -1,6 +1,5 @@
-import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
@@ -11,6 +10,7 @@ from app.auth.permissions import require_superadmin
 from app.database import get_db
 from app.models.tenant import Tenant
 from app.models.user import User
+from app.utils.slug import slugify
 
 router = APIRouter(prefix="/admin/tenants", tags=["admin-tenants"])
 
@@ -64,14 +64,6 @@ class TenantUpdate(BaseModel):
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-
-
-def _slugify(text: str) -> str:
-    text = text.lower().strip()
-    text = re.sub(r"[^\w\s-]", "", text)
-    text = re.sub(r"[\s_]+", "-", text)
-    text = re.sub(r"-+", "-", text)
-    return text
 
 
 def _serialize_tenant(t: Tenant) -> dict:
@@ -161,7 +153,7 @@ async def create_tenant(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Domain already registered")
 
-    slug = body.slug or _slugify(body.site_name)
+    slug = body.slug or slugify(body.site_name)
 
     # Check slug uniqueness
     existing = await db.execute(select(Tenant).where(Tenant.slug == slug))
@@ -221,7 +213,7 @@ async def update_tenant(
     for field, value in update_data.items():
         setattr(tenant, field, value)
 
-    tenant.updated_at = datetime.utcnow()
+    tenant.updated_at = datetime.now(timezone.utc)
     await db.flush()
     return _serialize_tenant(tenant)
 

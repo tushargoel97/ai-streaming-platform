@@ -166,7 +166,7 @@ export default function LiveDirectoryPage() {
         <>
           {/* Category tabs */}
           {categories.length > 1 && (
-            <div className="mb-6 flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+            <div className="mb-6 flex gap-2 overflow-x-auto pb-2 scrollbar-none">
               <button
                 onClick={() => setActiveTab(ALL_TAB)}
                 className={`shrink-0 rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${

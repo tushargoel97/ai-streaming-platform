@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
@@ -121,7 +121,7 @@ async def view_trends(
     Falls back to watch_history if no view_events exist (since view events
     are a newer addition to the platform).
     """
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
 
     # Try ViewEvent first (granular tracking)
     event_count = (
@@ -169,7 +169,7 @@ async def top_videos(
     user: User = Depends(require_admin),
 ):
     """Top videos by view count (overall or within a time period via view events)."""
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
 
     # Check if we have ViewEvent data
     event_count = (
@@ -236,7 +236,7 @@ async def watch_activity(
     user: User = Depends(require_admin),
 ):
     """Recent watch activity — who watched what, when."""
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
 
     stmt = (
         select(
@@ -351,7 +351,7 @@ async def dashboard_live_sse(
                     ).scalar() or 0
 
                     # Recent view events (last hour)
-                    hour_ago = datetime.utcnow() - timedelta(hours=1)
+                    hour_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
                     recent_views = (
                         await db.execute(
                             select(func.count(ViewEvent.id)).where(
@@ -366,7 +366,7 @@ async def dashboard_live_sse(
                     "processing_videos": processing,
                     "total_views": total_views,
                     "recent_view_events": recent_views,
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
                 yield f"data: {json.dumps(payload)}\n\n"
             except Exception:

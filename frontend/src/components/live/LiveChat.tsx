@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
+import { Link } from "react-router-dom";
 import { Send, LogIn } from "lucide-react";
 import { WS_URL } from "@/lib/constants";
 import type { ChatMessage } from "@/types/api";
@@ -19,54 +20,56 @@ export default function LiveChat({ streamId, className = "" }: LiveChatProps) {
   const token = localStorage.getItem("access_token");
   const isLoggedIn = !!token;
 
-  const connect = useCallback(() => {
-    const params = token ? `?token=${token}` : "";
-    const ws = new WebSocket(`${WS_URL}/chat/${streamId}${params}`);
-
-    ws.onopen = () => {
-      setConnected(true);
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const msg: ChatMessage = JSON.parse(event.data);
-        if (msg.type === "pong") return;
-        if (msg.type === "viewer_count") {
-          // Handled by parent via onViewerCount if needed,
-          // but also display as internal state
-          setMessages((prev) => {
-            // Replace the last viewer_count message instead of stacking
-            const filtered = prev.filter((m) => m.type !== "viewer_count");
-            return [...filtered, msg];
-          });
-          return;
-        }
-        setMessages((prev) => [...prev.slice(-200), msg]); // Keep last 200
-      } catch {
-        // ignore parse errors
-      }
-    };
-
-    ws.onclose = () => {
-      setConnected(false);
-      // Auto-reconnect after 3s
-      reconnectRef.current = setTimeout(connect, 3000);
-    };
-
-    ws.onerror = () => {
-      ws.close();
-    };
-
-    wsRef.current = ws;
-  }, [streamId, token]);
-
   useEffect(() => {
+    let cancelled = false;
+
+    const connect = () => {
+      if (cancelled) return;
+      const params = token ? `?token=${token}` : "";
+      const ws = new WebSocket(`${WS_URL}/chat/${streamId}${params}`);
+
+      ws.onopen = () => {
+        if (!cancelled) setConnected(true);
+      };
+
+      ws.onmessage = (event) => {
+        if (cancelled) return;
+        try {
+          const msg: ChatMessage = JSON.parse(event.data);
+          if (msg.type === "pong") return;
+          if (msg.type === "viewer_count") {
+            setMessages((prev) => {
+              const filtered = prev.filter((m) => m.type !== "viewer_count");
+              return [...filtered, msg];
+            });
+            return;
+          }
+          setMessages((prev) => [...prev.slice(-200), msg]);
+        } catch {
+          // ignore parse errors
+        }
+      };
+
+      ws.onclose = () => {
+        if (cancelled) return;
+        setConnected(false);
+        reconnectRef.current = setTimeout(connect, 3000);
+      };
+
+      ws.onerror = () => {
+        ws.close();
+      };
+
+      wsRef.current = ws;
+    };
+
     connect();
     return () => {
+      cancelled = true;
       if (reconnectRef.current) clearTimeout(reconnectRef.current);
       wsRef.current?.close();
     };
-  }, [connect]);
+  }, [streamId, token]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -160,13 +163,13 @@ export default function LiveChat({ streamId, className = "" }: LiveChatProps) {
             </button>
           </div>
         ) : (
-          <a
-            href="/login"
+          <Link
+            to="/login"
             className="flex items-center justify-center gap-2 rounded bg-[var(--card)] px-3 py-2.5 text-sm text-gray-400 transition-colors hover:text-white"
           >
             <LogIn size={14} />
             Log in to chat
-          </a>
+          </Link>
         )}
       </div>
     </div>

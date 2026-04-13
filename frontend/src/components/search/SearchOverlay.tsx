@@ -156,6 +156,7 @@ export default function SearchOverlay({ open, onClose }: SearchOverlayProps) {
   const [recentlyAdded, setRecentlyAdded] = useState<Video[]>([]);
   const [trendingLoaded, setTrendingLoaded] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   // AI search state
   const [aiMode, setAiMode] = useState(false);
@@ -199,22 +200,29 @@ export default function SearchOverlay({ open, onClose }: SearchOverlayProps) {
       return;
     }
 
+    // Abort any in-flight search
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setLoading(true);
     try {
       const [videosRes, talentsRes, seriesRes] = await Promise.all([
-        api.get<{ items: Video[]; total: number }>("/videos", { search: q, page_size: "20" }),
-        api.get<{ items: Talent[]; total: number }>("/talents", { search: q, page_size: "6" }),
-        api.get<{ items: Series[]; total: number }>("/series", { search: q, page_size: "6" }),
+        api.get<{ items: Video[]; total: number }>("/videos", { search: q, page_size: "20" }, controller.signal),
+        api.get<{ items: Talent[]; total: number }>("/talents", { search: q, page_size: "6" }, controller.signal),
+        api.get<{ items: Series[]; total: number }>("/series", { search: q, page_size: "6" }, controller.signal),
       ]);
+      if (controller.signal.aborted) return;
       setResults({
         videos: videosRes.items,
         talents: talentsRes.items,
         series: seriesRes.items,
       });
-    } catch {
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return;
       setResults({ videos: [], talents: [], series: [] });
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
   }, []);
 
@@ -228,6 +236,7 @@ export default function SearchOverlay({ open, onClose }: SearchOverlayProps) {
     debounceRef.current = setTimeout(() => doSearch(query), 300);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
+      abortRef.current?.abort();
     };
   }, [query, doSearch, aiMode]);
 

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Check, Loader2 } from "lucide-react";
-import { api } from "@/api/client";
+import { api, ApiError } from "@/api/client";
 import { useAuthStore } from "@/stores/authStore";
 
 interface Tier {
@@ -29,6 +29,8 @@ export default function PricingPage() {
   const [loading, setLoading] = useState(true);
   const [currentSub, setCurrentSub] = useState<UserSub | null>(null);
   const [annual, setAnnual] = useState(false);
+  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -185,17 +187,41 @@ export default function PricingPage() {
                   </button>
                 ) : (
                   <button
-                    onClick={() => {
+                    disabled={checkoutLoading === tier.id}
+                    onClick={async () => {
                       if (!isAuthenticated) {
                         navigate("/login");
+                        return;
                       }
-                      // TODO: integrate with checkout endpoint
+                      setCheckoutLoading(tier.id);
+                      setCheckoutError(null);
+                      try {
+                        const result = await api.post<{ url: string }>("/subscriptions/checkout", {
+                          tier_id: tier.id,
+                          billing_period: annual ? "yearly" : "monthly",
+                          success_url: `${window.location.origin}/pricing?success=1`,
+                          cancel_url: `${window.location.origin}/pricing`,
+                        });
+                        if (result.url) {
+                          window.location.href = result.url;
+                        }
+                      } catch (e) {
+                        setCheckoutError(
+                          e instanceof ApiError ? "Checkout unavailable. Please try again later." : "Something went wrong.",
+                        );
+                      } finally {
+                        setCheckoutLoading(null);
+                      }
                     }}
-                    className="w-full rounded-lg bg-[var(--primary)] py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                    className="w-full rounded-lg bg-[var(--primary)] py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
                   >
-                    {currentTierLevel >= 0 && tier.tier_level > currentTierLevel
-                      ? "Upgrade"
-                      : "Subscribe"}
+                    {checkoutLoading === tier.id ? (
+                      <Loader2 className="mx-auto h-4 w-4 animate-spin" />
+                    ) : currentTierLevel >= 0 && tier.tier_level > currentTierLevel ? (
+                      "Upgrade"
+                    ) : (
+                      "Subscribe"
+                    )}
                   </button>
                 )}
               </div>
@@ -203,6 +229,10 @@ export default function PricingPage() {
           );
         })}
       </div>
+
+      {checkoutError && (
+        <p className="mt-6 text-center text-sm text-red-400">{checkoutError}</p>
+      )}
     </div>
   );
 }

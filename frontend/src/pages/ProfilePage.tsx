@@ -70,8 +70,9 @@ export default function ProfilePage() {
               </div>
             )}
             <div className="flex-1">
-              <label className="mb-1 block text-xs text-gray-400">Avatar URL</label>
+              <label htmlFor="profile-avatar" className="mb-1 block text-xs text-gray-400">Avatar URL</label>
               <input
+                id="profile-avatar"
                 type="text"
                 placeholder="https://example.com/avatar.jpg"
                 value={avatarUrl}
@@ -82,8 +83,9 @@ export default function ProfilePage() {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-gray-400">Email</label>
+            <label htmlFor="profile-email" className="mb-1 block text-xs text-gray-400">Email</label>
             <input
+              id="profile-email"
               type="text"
               value={user.email}
               disabled
@@ -93,8 +95,9 @@ export default function ProfilePage() {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-gray-400">Username</label>
+            <label htmlFor="profile-username" className="mb-1 block text-xs text-gray-400">Username</label>
             <input
+              id="profile-username"
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
@@ -104,8 +107,9 @@ export default function ProfilePage() {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-gray-400">Display Name</label>
+            <label htmlFor="profile-display-name" className="mb-1 block text-xs text-gray-400">Display Name</label>
             <input
+              id="profile-display-name"
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
@@ -115,8 +119,9 @@ export default function ProfilePage() {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-gray-400">Role</label>
+            <label htmlFor="profile-role" className="mb-1 block text-xs text-gray-400">Role</label>
             <input
+              id="profile-role"
               type="text"
               value={user.role}
               disabled

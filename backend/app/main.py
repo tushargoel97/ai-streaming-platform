@@ -13,7 +13,12 @@ from app.tenant.middleware import TenantMiddleware
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
+    # Startup — safety checks
+    if settings.app_env == "production":
+        if settings.jwt_secret_key == "change-me-in-production-use-a-strong-random-secret":
+            raise RuntimeError("JWT_SECRET_KEY must be changed in production")
+        if settings.admin_password == "admin123":
+            raise RuntimeError("ADMIN_PASSWORD must be changed in production")
     yield
     # Shutdown
     await engine.dispose()
@@ -27,10 +32,14 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if settings.debug else None,
     )
 
+    cors_origins = (
+        ["*"] if settings.debug
+        else [o.strip() for o in settings.frontend_url.split(",") if o.strip()]
+    )
     application.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=cors_origins,
+        allow_credentials=not settings.debug,
         allow_methods=["*"],
         allow_headers=["*"],
     )

@@ -1,7 +1,7 @@
 """Admin AI settings — configure LLM provider, models, and AI features."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -76,7 +76,7 @@ async def _get_or_create_settings(db: AsyncSession) -> AISettings:
     result = await db.execute(select(AISettings))
     ai = result.scalar_one_or_none()
     if ai is None:
-        ai = AISettings(updated_at=datetime.utcnow())
+        ai = AISettings(updated_at=datetime.now(timezone.utc))
         db.add(ai)
         await db.flush()
     return ai
@@ -118,7 +118,7 @@ async def update_settings(
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(ai, field, value)
 
-    ai.updated_at = datetime.utcnow()
+    ai.updated_at = datetime.now(timezone.utc)
     await db.commit()
 
     # If a model changed, tell the AI service to pre-load it

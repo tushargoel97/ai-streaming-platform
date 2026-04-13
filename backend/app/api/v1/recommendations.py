@@ -4,7 +4,7 @@ import json
 import logging
 import uuid
 
-import redis.asyncio as aioredis
+from app.database import redis_pool
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,24 +24,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 
 
-async def _get_redis():
-    return aioredis.from_url(settings.redis_url)
-
-
 async def _get_cached(key: str) -> str | None:
-    r = await _get_redis()
-    try:
-        return await r.get(key)
-    finally:
-        await r.aclose()
+    return await redis_pool.get(key)
 
 
 async def _set_cached(key: str, value: str, ttl: int | None = None) -> None:
-    r = await _get_redis()
-    try:
-        await r.set(key, value, ex=ttl or settings.recommendation_cache_ttl)
-    finally:
-        await r.aclose()
+    await redis_pool.set(key, value, ex=ttl or settings.recommendation_cache_ttl)
 
 
 def _serialize_videos(videos) -> str:

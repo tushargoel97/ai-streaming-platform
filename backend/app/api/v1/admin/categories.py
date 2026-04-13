@@ -1,4 +1,3 @@
-import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -10,16 +9,9 @@ from app.auth.permissions import require_admin
 from app.database import get_db
 from app.models.category import Category
 from app.models.user import User
+from app.utils.slug import slugify
 
 router = APIRouter(prefix="/admin/categories", tags=["admin-categories"])
-
-
-def _slugify(text: str) -> str:
-    text = text.lower().strip()
-    text = re.sub(r"[^\w\s-]", "", text)
-    text = re.sub(r"[\s_]+", "-", text)
-    text = re.sub(r"-+", "-", text)
-    return text
 
 
 # ── Schemas ──────────────────────────────────────────────────────────────────
@@ -95,7 +87,7 @@ async def create_category(
 
     created = []
     for tid in target_tenant_ids:
-        slug = _slugify(body.name)
+        slug = slugify(body.name)
 
         # Check for duplicate slug within the tenant
         existing = await db.execute(
@@ -190,8 +182,18 @@ async def update_category(
 
     update_data = body.model_dump(exclude_unset=True)
     if "name" in update_data:
+        new_slug = slugify(update_data["name"])
+        existing = await db.execute(
+            select(Category.id).where(
+                Category.slug == new_slug,
+                Category.tenant_id == category.tenant_id,
+                Category.id != category_id,
+            )
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail="A category with that name already exists")
         category.name = update_data["name"]
-        category.slug = _slugify(update_data["name"])
+        category.slug = new_slug
     if "description" in update_data:
         category.description = update_data["description"]
     if "sort_order" in update_data:

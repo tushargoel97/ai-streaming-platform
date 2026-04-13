@@ -1,6 +1,5 @@
-import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -16,6 +15,7 @@ from app.models.tournament import Competition
 from app.models.match import Event
 from app.models.user import User
 from app.tenant.context import get_tenant_id
+from app.utils.slug import slugify
 
 router = APIRouter(prefix="/admin/competitions", tags=["admin-competitions"])
 
@@ -50,14 +50,6 @@ class CompetitionUpdate(BaseModel):
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-
-
-def _slugify(text: str) -> str:
-    text = text.lower().strip()
-    text = re.sub(r"[^\w\s-]", "", text)
-    text = re.sub(r"[\s_]+", "-", text)
-    text = re.sub(r"-+", "-", text)
-    return text
 
 
 def _serialize(c: Competition, event_count: int = 0) -> dict:
@@ -118,15 +110,18 @@ async def list_competitions(
     result = await db.execute(query)
     comps = result.scalars().all()
 
-    # Get event counts
-    items = []
-    for c in comps:
-        count_result = await db.execute(
-            select(func.count()).where(Event.competition_id == c.id)
+    # Batch event counts in one query
+    comp_ids = [c.id for c in comps]
+    event_counts: dict = {}
+    if comp_ids:
+        count_rows = await db.execute(
+            select(Event.competition_id, func.count())
+            .where(Event.competition_id.in_(comp_ids))
+            .group_by(Event.competition_id)
         )
-        event_count = count_result.scalar() or 0
-        items.append(_serialize(c, event_count))
+        event_counts = dict(count_rows.all())
 
+    items = [_serialize(c, event_counts.get(c.id, 0)) for c in comps]
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
@@ -161,7 +156,7 @@ async def create_competition(
 ):
     tid = tenant_id or get_tenant_id()
 
-    base_slug = _slugify(body.name)
+    base_slug = slugify(body.name)
     existing = await db.execute(
         select(Competition).where(
             Competition.tenant_id == tid,
@@ -211,7 +206,7 @@ async def update_competition(
     for field, value in update_data.items():
         setattr(comp, field, value)
 
-    comp.updated_at = datetime.utcnow()
+    comp.updated_at = datetime.now(timezone.utc)
     await db.flush()
     await db.refresh(comp, ["category"])
     return _serialize(comp)

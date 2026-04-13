@@ -17,12 +17,12 @@ import {
 } from "lucide-react";
 import { api } from "@/api/client";
 import type { Video, Category, PaginatedResponse, AdminTenant } from "@/types/api";
-import { formatDuration } from "@/lib/utils";
+import { formatDuration, formatBytes } from "@/lib/utils";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 
 type VideoStatus = Video["status"];
 
-const API_URL = import.meta.env.VITE_API_URL || "/api/v1";
+import { API_URL } from "@/lib/constants";
 
 const STATUS_CONFIG: Record<VideoStatus, { label: string; color: string; icon: React.ReactNode }> = {
   uploading: { label: "Uploading", color: "text-blue-400", icon: <Loader2 size={14} className="animate-spin" /> },
@@ -31,14 +31,6 @@ const STATUS_CONFIG: Record<VideoStatus, { label: string; color: string; icon: R
   failed: { label: "Failed", color: "text-red-400", icon: <AlertCircle size={14} /> },
   deleted: { label: "Deleted", color: "text-gray-500", icon: <Trash2 size={14} /> },
 };
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
-}
 
 function TranscodeProgress({
   videoId,

@@ -2,8 +2,7 @@ import { useState, useEffect } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 import { ApiError } from "@/api/client";
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8080/api/v1";
+import { API_URL } from "@/lib/constants";
 
 export default function SignupPage() {
   const [email, setEmail] = useState("");
@@ -99,8 +98,9 @@ export default function SignupPage() {
           {error && <p className="text-sm text-red-500">{error}</p>}
 
           <div>
-            <label className="mb-1 block text-xs text-gray-400">Email</label>
+            <label htmlFor="signup-email" className="mb-1 block text-xs text-gray-400">Email</label>
             <input
+              id="signup-email"
               type="email"
               placeholder="you@example.com"
               value={email}
@@ -111,8 +111,9 @@ export default function SignupPage() {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-gray-400">Username</label>
+            <label htmlFor="signup-username" className="mb-1 block text-xs text-gray-400">Username</label>
             <input
+              id="signup-username"
               type="text"
               placeholder="Choose a username"
               value={username}
@@ -123,10 +124,11 @@ export default function SignupPage() {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-gray-400">
+            <label htmlFor="signup-display-name" className="mb-1 block text-xs text-gray-400">
               Display Name <span className="text-gray-500">(optional)</span>
             </label>
             <input
+              id="signup-display-name"
               type="text"
               placeholder="How others see you"
               value={displayName}
@@ -136,8 +138,9 @@ export default function SignupPage() {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-gray-400">Password</label>
+            <label htmlFor="signup-password" className="mb-1 block text-xs text-gray-400">Password</label>
             <input
+              id="signup-password"
               type="password"
               placeholder="At least 6 characters"
               value={password}
@@ -149,8 +152,9 @@ export default function SignupPage() {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-gray-400">Confirm Password</label>
+            <label htmlFor="signup-confirm-password" className="mb-1 block text-xs text-gray-400">Confirm Password</label>
             <input
+              id="signup-confirm-password"
               type="password"
               placeholder="Re-enter password"
               value={confirmPassword}

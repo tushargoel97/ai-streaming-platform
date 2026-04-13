@@ -202,10 +202,12 @@ export default function VideoCard({
   // ── Watchlist + reaction status ────────────────────────────
   useEffect(() => {
     if (!showPopup || !isAuthenticated) return;
-    api.get<{ in_watchlist: boolean }>(`/watchlist/${video.id}/status`)
+    const controller = new AbortController();
+    api.get<{ in_watchlist: boolean }>(`/watchlist/${video.id}/status`, undefined, controller.signal)
       .then((s) => setInWatchlist(s.in_watchlist)).catch(() => {});
-    api.get<{ user_reaction: string | null }>(`/videos/${video.id}/reactions`)
+    api.get<{ user_reaction: string | null }>(`/videos/${video.id}/reactions`, undefined, controller.signal)
       .then((r) => setIsLiked(r.user_reaction === "like")).catch(() => {});
+    return () => controller.abort();
   }, [showPopup, isAuthenticated, video.id]);
 
   // ── Cleanup ────────────────────────────────────────────────
@@ -221,19 +223,23 @@ export default function VideoCard({
   const toggleWatchlist = async (e: React.MouseEvent) => {
     stop(e);
     if (!isAuthenticated) return;
+    const prev = inWatchlist;
+    setInWatchlist(!prev);
     try {
-      if (inWatchlist) { await api.delete(`/watchlist/${video.id}`); setInWatchlist(false); }
-      else { await api.post(`/watchlist/${video.id}`); setInWatchlist(true); }
-    } catch { /* silent */ }
+      if (prev) { await api.delete(`/watchlist/${video.id}`); }
+      else { await api.post(`/watchlist/${video.id}`); }
+    } catch { setInWatchlist(prev); }
   };
 
   const toggleLike = async (e: React.MouseEvent) => {
     stop(e);
     if (!isAuthenticated) return;
+    const prev = isLiked;
+    setIsLiked(!prev);
     try {
-      if (isLiked) { await api.delete(`/videos/${video.id}/react`); setIsLiked(false); }
-      else { await api.post(`/videos/${video.id}/react`, { reaction: "like" }); setIsLiked(true); }
-    } catch { /* silent */ }
+      if (prev) { await api.delete(`/videos/${video.id}/react`); }
+      else { await api.post(`/videos/${video.id}/react`, { reaction: "like" }); }
+    } catch { setIsLiked(prev); }
   };
 
   const handlePlay = (e: React.MouseEvent) => { stop(e); navigate(`/watch/${video.id}`); };

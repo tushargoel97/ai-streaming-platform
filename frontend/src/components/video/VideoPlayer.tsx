@@ -103,7 +103,6 @@ export interface VideoPlayerProps {
   // Paused info overlay
   title?: string;
   description?: string;
-  episodeLabel?: string; // e.g. "Season 2 · Episode 4 · 45m"
   onBack?: () => void;
 }
 

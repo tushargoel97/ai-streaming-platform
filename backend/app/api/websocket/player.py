@@ -19,7 +19,7 @@ heartbeat data is only persisted for authenticated users.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
@@ -168,7 +168,7 @@ async def player_session(
 
                             if wh:
                                 wh.progress = current_time
-                                wh.last_watched_at = datetime.utcnow()
+                                wh.last_watched_at = datetime.now(timezone.utc)
                                 if video_duration > 0 and current_time >= video_duration * 0.9:
                                     if not wh.completed:
                                         wh.completed = True

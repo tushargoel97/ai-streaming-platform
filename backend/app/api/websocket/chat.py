@@ -18,7 +18,6 @@ Authentication is optional: anonymous users can watch but not send messages.
 """
 
 import uuid
-from collections import defaultdict
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect

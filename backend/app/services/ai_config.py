@@ -1,7 +1,7 @@
 """AI config helper — reads AI settings from DB and builds LLM config for AI service calls."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +16,7 @@ async def get_ai_settings(db: AsyncSession) -> AISettings:
     result = await db.execute(select(AISettings))
     ai = result.scalar_one_or_none()
     if ai is None:
-        ai = AISettings(updated_at=datetime.utcnow())
+        ai = AISettings(updated_at=datetime.now(timezone.utc))
         db.add(ai)
         await db.flush()
         await db.commit()

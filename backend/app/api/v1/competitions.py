@@ -111,13 +111,18 @@ async def list_competitions(
     result = await db.execute(query)
     comps = result.scalars().all()
 
-    items = []
-    for c in comps:
-        ec = (await db.execute(
-            select(func.count()).where(Event.competition_id == c.id)
-        )).scalar() or 0
-        items.append(_serialize_competition(c, ec))
+    # Batch event counts in one query
+    comp_ids = [c.id for c in comps]
+    event_counts: dict = {}
+    if comp_ids:
+        count_rows = await db.execute(
+            select(Event.competition_id, func.count())
+            .where(Event.competition_id.in_(comp_ids))
+            .group_by(Event.competition_id)
+        )
+        event_counts = dict(count_rows.all())
 
+    items = [_serialize_competition(c, event_counts.get(c.id, 0)) for c in comps]
     return {"items": items}
 
 
@@ -170,13 +175,13 @@ async def upcoming_events(
     if not tenant:
         return {"items": []}
 
-    from datetime import datetime
+    from datetime import datetime, timezone
     result = await db.execute(
         select(Event)
         .where(
             Event.tenant_id == tenant.id,
             Event.status == "scheduled",
-            Event.scheduled_at >= datetime.utcnow(),
+            Event.scheduled_at >= datetime.now(timezone.utc).replace(tzinfo=None),
         )
         .options(selectinload(Event.competition))
         .order_by(Event.scheduled_at.asc())

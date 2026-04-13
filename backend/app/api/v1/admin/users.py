@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
@@ -171,7 +171,7 @@ async def update_user(
     for field, value in update_data.items():
         setattr(target, field, value)
 
-    target.updated_at = datetime.utcnow()
+    target.updated_at = datetime.now(timezone.utc)
     await db.flush()
     return _serialize_user(target)
 
@@ -194,4 +194,4 @@ async def deactivate_user(
         raise HTTPException(status_code=403, detail="Only superadmins can deactivate superadmin accounts")
 
     target.is_active = False
-    target.updated_at = datetime.utcnow()
+    target.updated_at = datetime.now(timezone.utc)

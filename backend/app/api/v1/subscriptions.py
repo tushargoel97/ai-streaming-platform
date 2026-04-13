@@ -24,6 +24,7 @@ from app.models.subscription import (
     SeasonPass,
     SeasonPassConfig,
     SubscriptionTier,
+    SubscriptionTierPrice,
     UserSubscription,
 )
 from app.models.user import User
@@ -51,18 +52,31 @@ class PPVCheckoutRequest(BaseModel):
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
+def _serialize_price(p: SubscriptionTierPrice) -> dict:
+    return {
+        "currency": p.currency,
+        "regions": p.regions or [],
+        "price_monthly": str(p.price_monthly),
+        "price_yearly": str(p.price_yearly),
+        "is_default": p.is_default,
+    }
+
+
 def _serialize_tier(t: SubscriptionTier) -> dict:
+    prices = t.prices or []
+    default_price = next((p for p in prices if p.is_default), prices[0] if prices else None)
     return {
         "id": str(t.id),
         "name": t.name,
         "slug": t.slug,
         "tier_level": t.tier_level,
-        "price_monthly": str(t.price_monthly),
-        "price_yearly": str(t.price_yearly),
-        "currency": t.currency,
+        "price_monthly": str(default_price.price_monthly) if default_price else "0",
+        "price_yearly": str(default_price.price_yearly) if default_price else "0",
+        "currency": default_price.currency if default_price else "USD",
         "description": t.description,
         "features": t.features,
         "sort_order": t.sort_order,
+        "prices": [_serialize_price(p) for p in prices],
     }
 
 
@@ -85,6 +99,7 @@ async def list_tiers(
             SubscriptionTier.tenant_id == tenant.id,
             SubscriptionTier.is_active == True,
         )
+        .options(selectinload(SubscriptionTier.prices))
         .order_by(SubscriptionTier.sort_order, SubscriptionTier.tier_level)
     )
     tiers = result.scalars().all()
@@ -356,7 +371,16 @@ async def payment_webhook(
         or ""
     )
 
-    if webhook_secret and sig:
+    if not webhook_secret:
+        from app.config import settings
+        if settings.app_env == "production":
+            raise HTTPException(status_code=503, detail="Webhook verification not configured")
+        # Dev mode — parse directly
+        import json
+        event = json.loads(body)
+    elif not sig:
+        raise HTTPException(status_code=400, detail="Missing webhook signature header")
+    else:
         event = await backend.verify_webhook(
             body=body,
             signature=sig,
@@ -364,10 +388,6 @@ async def payment_webhook(
         )
         if event is None:
             raise HTTPException(status_code=400, detail="Invalid webhook signature")
-    else:
-        # Dev mode — parse directly
-        import json
-        event = json.loads(body)
 
     # Extract standardized checkout data
     checkout_data = backend.extract_checkout_completed(event)
@@ -384,7 +404,7 @@ async def _handle_checkout_completed(
     db: AsyncSession,
 ) -> None:
     """Process a completed checkout from any payment provider."""
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     metadata = data.get("metadata", {})
     user_id = metadata.get("user_id")
@@ -440,7 +460,7 @@ async def _handle_checkout_completed(
             sub.payment_provider = provider_name
             sub.provider_subscription_id = data.get("provider_subscription_id")
             sub.provider_customer_id = data.get("provider_customer_id")
-            sub.updated_at = datetime.utcnow()
+            sub.updated_at = datetime.now(timezone.utc)
         else:
             sub = UserSubscription(
                 user_id=uuid.UUID(user_id),

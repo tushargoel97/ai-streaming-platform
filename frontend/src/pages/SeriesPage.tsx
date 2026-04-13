@@ -77,7 +77,7 @@ export default function SeriesPage() {
 
   if (!series) {
     return (
-      <div className="px-12 pt-24 text-center text-gray-400">
+      <div className="px-4 sm:px-8 lg:px-12 pt-24 text-center text-gray-400">
         Series not found.
       </div>
     );
@@ -97,7 +97,7 @@ export default function SeriesPage() {
     <div className="pt-[72px]">
       {/* Series banner */}
       <div
-        className="relative flex h-80 items-end bg-gradient-to-t from-black to-gray-800 px-12 pb-8"
+        className="relative flex h-80 items-end bg-gradient-to-t from-black to-gray-800 px-4 sm:px-8 lg:px-12 pb-8"
         style={
           series.banner_url
             ? { backgroundImage: `url(${series.banner_url})`, backgroundSize: "cover", backgroundPosition: "center" }
@@ -165,7 +165,7 @@ export default function SeriesPage() {
       </div>
 
       {/* Season tabs & episode list */}
-      <div className="px-12 py-6">
+      <div className="px-4 sm:px-8 lg:px-12 py-6">
         {sortedSeasons.length > 0 ? (
           <>
             <div className="mb-6 flex gap-4 border-b border-[var(--border)]">

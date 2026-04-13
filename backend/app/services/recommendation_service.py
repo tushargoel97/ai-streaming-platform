@@ -1,9 +1,11 @@
 """Recommendation service — content-based, collaborative filtering, and hybrid scoring."""
 
+import json
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
+import numpy as np
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -116,9 +118,9 @@ async def get_personalized_feed(
     Returns a list of sections like:
       [{"title": "Trending Now", "videos": [...]}, {"title": "Because You Watched", "videos": [...]}]
     """
-    sections: list[dict] = []
+    # ── Fetch all section data ────────────────────────────────────────────
 
-    # 1. Featured videos (always shown)
+    # Featured
     featured_result = await db.execute(
         select(Video)
         .where(Video.status == "ready", Video.is_featured == True)
@@ -126,11 +128,9 @@ async def get_personalized_feed(
         .limit(10)
     )
     featured = list(featured_result.scalars().all())
-    if featured:
-        sections.append({"title": "Featured", "videos": featured})
 
-    # 2. Top 10 this week (by ViewEvent count over last 7 days)
-    week_ago = datetime.utcnow() - timedelta(days=7)
+    # Top 10 this week (by ViewEvent count over last 7 days)
+    week_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
     top10_result = await db.execute(
         select(Video)
         .join(ViewEvent, ViewEvent.video_id == Video.id)
@@ -141,7 +141,6 @@ async def get_personalized_feed(
     )
     top10 = list(top10_result.scalars().all())
     if not top10:
-        # Fallback: all-time top 10 by view_count when event data is sparse
         top10_fallback = await db.execute(
             select(Video)
             .where(Video.status == "ready")
@@ -149,10 +148,8 @@ async def get_personalized_feed(
             .limit(10)
         )
         top10 = list(top10_fallback.scalars().all())
-    if top10:
-        sections.append({"title": "Top 10 This Week", "videos": top10})
 
-    # 3. Trending (view_count based — always shown)
+    # Trending (view_count based)
     trending_result = await db.execute(
         select(Video)
         .where(Video.status == "ready")
@@ -160,10 +157,8 @@ async def get_personalized_feed(
         .limit(limit)
     )
     trending = list(trending_result.scalars().all())
-    if trending:
-        sections.append({"title": "Trending Now", "videos": trending})
 
-    # 4. Recently added
+    # Recently added
     recent_result = await db.execute(
         select(Video)
         .where(Video.status == "ready")
@@ -171,39 +166,48 @@ async def get_personalized_feed(
         .limit(limit)
     )
     recent = list(recent_result.scalars().all())
+
+    # Authenticated-only sections
+    continue_watching: list = []
+    collaborative: list = []
+    personalized: list = []
+
+    if user_id:
+        continue_result = await db.execute(
+            select(Video)
+            .join(WatchHistory, WatchHistory.video_id == Video.id)
+            .where(
+                WatchHistory.user_id == user_id,
+                WatchHistory.progress > 0,
+                Video.status == "ready",
+                Video.duration > 0,
+            )
+            .where(
+                (WatchHistory.progress / Video.duration) < 0.5,
+            )
+            .order_by(WatchHistory.last_watched_at.desc())
+            .limit(limit)
+        )
+        continue_watching = list(continue_result.scalars().all())
+
+        collaborative = await get_because_you_watched(user_id, db, limit=limit)
+        personalized = await _get_embedding_personalized(user_id, db, limit=limit)
+
+    # ── Assemble in display order ───────────────────────────────────────
+    # Continue Watching > Top 10 > Trending > Recently Added > Featured > Because You Watched > Recommended
+    sections: list[dict] = []
+    if continue_watching:
+        sections.append({"title": "Continue Watching", "videos": continue_watching})
+    if top10:
+        sections.append({"title": "Top 10 This Week", "videos": top10})
+    if trending:
+        sections.append({"title": "Trending Now", "videos": trending})
     if recent:
         sections.append({"title": "Recently Added", "videos": recent})
-
-    if not user_id:
-        return sections
-
-    # 5. "Continue Watching" — in-progress videos (> 0% and < 50%)
-    continue_result = await db.execute(
-        select(Video)
-        .join(WatchHistory, WatchHistory.video_id == Video.id)
-        .where(
-            WatchHistory.user_id == user_id,
-            WatchHistory.progress > 0,
-            Video.status == "ready",
-            Video.duration > 0,
-        )
-        .where(
-            (WatchHistory.progress / Video.duration) < 0.5,
-        )
-        .order_by(WatchHistory.last_watched_at.desc())
-        .limit(limit)
-    )
-    continue_watching = list(continue_result.scalars().all())
-    if continue_watching:
-        sections.insert(0, {"title": "Continue Watching", "videos": continue_watching})
-
-    # 6. "Because You Watched" (collaborative, authenticated only)
-    collaborative = await get_because_you_watched(user_id, db, limit=limit)
+    if featured:
+        sections.append({"title": "Featured", "videos": featured})
     if collaborative:
         sections.append({"title": "Because You Watched", "videos": collaborative})
-
-    # 7. Personalized via embedding — average of liked/watched video embeddings
-    personalized = await _get_embedding_personalized(user_id, db, limit=limit)
     if personalized:
         sections.append({"title": "Recommended For You", "videos": personalized})
 
@@ -240,13 +244,23 @@ async def _get_embedding_personalized(
         return []
 
     # Compute average embedding (user profile vector)
-    avg_result = await db.execute(
-        select(func.avg(VideoEmbedding.embedding))
+    # func.avg on pgvector returns a string representation; fetch individual
+    # embeddings and average them in Python to get a proper numpy array.
+    emb_rows = await db.execute(
+        select(VideoEmbedding.embedding)
         .where(VideoEmbedding.video_id.in_(profile_ids))
     )
-    avg_embedding = avg_result.scalar_one_or_none()
-    if avg_embedding is None:
+    embeddings = emb_rows.scalars().all()
+    if not embeddings:
         return []
+    # Parse string representations if needed, then average
+    vectors = []
+    for e in embeddings:
+        if isinstance(e, str):
+            vectors.append(np.array(json.loads(e), dtype=np.float32))
+        else:
+            vectors.append(np.array(e, dtype=np.float32))
+    avg_embedding = np.mean(vectors, axis=0).tolist()
 
     # Get all user's watched video IDs to exclude
     watched_result = await db.execute(

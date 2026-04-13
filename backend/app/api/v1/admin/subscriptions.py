@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -290,7 +290,7 @@ async def update_tier(
                 sort_order=p.get("sort_order", i),
             ))
 
-    tier.updated_at = datetime.utcnow()
+    tier.updated_at = datetime.now(timezone.utc)
     await db.flush()
     await db.refresh(tier, ["prices"])
     return _serialize_tier(tier)
@@ -389,7 +389,7 @@ async def grant_subscription(
         sub.billing_period = body.billing_period
         sub.status = "active"
         sub.cancelled_at = None
-        sub.updated_at = datetime.utcnow()
+        sub.updated_at = datetime.now(timezone.utc)
     else:
         sub = UserSubscription(
             user_id=body.user_id,
@@ -428,8 +428,8 @@ async def revoke_subscription(
         raise HTTPException(status_code=404, detail="No subscription found for this user")
 
     sub.status = "cancelled"
-    sub.cancelled_at = datetime.utcnow()
-    sub.updated_at = datetime.utcnow()
+    sub.cancelled_at = datetime.now(timezone.utc)
+    sub.updated_at = datetime.now(timezone.utc)
     await db.flush()
     return _serialize_user_sub(sub)
 

@@ -23,6 +23,7 @@ export const useTenantStore = create<TenantState>((set) => ({
       document.documentElement.style.setProperty("--primary", config.primary_color);
       document.documentElement.style.setProperty("--secondary", config.secondary_color);
       document.documentElement.style.setProperty("--background", config.background_color);
+      document.documentElement.style.setProperty("--bg", config.background_color);
       if (config.site_name) document.title = config.site_name;
     } catch {
       set({ error: "Failed to load site configuration", loading: false });

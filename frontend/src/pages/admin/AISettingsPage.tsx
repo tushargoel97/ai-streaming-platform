@@ -15,7 +15,7 @@ import {
   MessageSquare,
 } from "lucide-react";
 
-const API = import.meta.env.VITE_API_URL || "/api/v1";
+import { API_URL as API } from "@/lib/constants";
 
 interface AIConfig {
   use_external_llm: boolean;

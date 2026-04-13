@@ -40,14 +40,14 @@ export default function TalentPage() {
 
   if (!talent) {
     return (
-      <div className="px-12 pt-24 text-center text-gray-400">
+      <div className="px-4 sm:px-8 lg:px-12 pt-24 text-center text-gray-400">
         Talent not found.
       </div>
     );
   }
 
   return (
-    <div className="px-12 pt-24">
+    <div className="px-4 sm:px-8 lg:px-12 pt-24">
       <div className="flex gap-8">
         {talent.photo_url ? (
           <img

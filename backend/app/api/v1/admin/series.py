@@ -1,6 +1,5 @@
-import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
@@ -12,6 +11,7 @@ from app.database import get_db
 from app.models.series import Season, Series
 from app.models.user import User
 from app.models.video import Video
+from app.utils.slug import slugify
 from app.schemas.series import (
     EpisodeAssignRequest,
     SeasonCreateRequest,
@@ -27,14 +27,6 @@ from app.schemas.video import VideoResponse
 router = APIRouter(prefix="/admin/series", tags=["admin-series"])
 
 
-def _slugify(text: str) -> str:
-    text = text.lower().strip()
-    text = re.sub(r"[^\w\s-]", "", text)
-    text = re.sub(r"[\s_]+", "-", text)
-    text = re.sub(r"-+", "-", text)
-    return text
-
-
 @router.post("", response_model=SeriesDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_series(
     body: SeriesCreateRequest,
@@ -44,7 +36,7 @@ async def create_series(
     if body.content_classification not in ("safe", "mature", "explicit"):
         raise HTTPException(status_code=400, detail="Invalid content_classification")
 
-    base_slug = _slugify(body.title)
+    base_slug = slugify(body.title)
     existing = await db.execute(select(Series).where(Series.slug == base_slug))
     if existing.scalar_one_or_none():
         base_slug = f"{base_slug}-{uuid.uuid4().hex[:6]}"
@@ -134,7 +126,7 @@ async def update_series(
     for field, value in update_data.items():
         setattr(series, field, value)
 
-    series.updated_at = datetime.utcnow()
+    series.updated_at = datetime.now(timezone.utc)
     return series
 
 
@@ -249,5 +241,5 @@ async def assign_episode(
     video.series_id = body.series_id
     video.season_id = body.season_id
     video.episode_number = body.episode_number
-    video.updated_at = datetime.utcnow()
+    video.updated_at = datetime.now(timezone.utc)
     return video

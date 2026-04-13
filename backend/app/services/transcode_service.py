@@ -5,9 +5,9 @@ import logging
 import os
 import shutil
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
-import redis.asyncio as aioredis
+from app.database import redis_pool
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,17 +29,13 @@ WORK_DIR = "/tmp/transcode"
 
 async def _publish_progress(video_id: uuid.UUID, percent: float, stage: str) -> None:
     """Store transcode progress in Redis for SSE consumption."""
-    r = aioredis.from_url(settings.redis_url)
-    try:
-        import json
+    import json
 
-        await r.set(
-            f"transcode:progress:{video_id}",
-            json.dumps({"percent": round(percent, 1), "stage": stage}),
-            ex=3600,  # expire after 1 hour
-        )
-    finally:
-        await r.aclose()
+    await redis_pool.set(
+        f"transcode:progress:{video_id}",
+        json.dumps({"percent": round(percent, 1), "stage": stage}),
+        ex=3600,  # expire after 1 hour
+    )
 
 
 def start_transcode(video_id: uuid.UUID) -> None:
@@ -54,18 +50,14 @@ async def _transcode_pipeline(video_id: uuid.UUID) -> None:
     # Dedup guard: skip if another task is already actively transcoding this video.
     # "queued" means no task has started yet (stuck video); any other active stage
     # means a real task is running and this duplicate should bail.
-    r = aioredis.from_url(settings.redis_url)
-    try:
-        raw = await r.get(f"transcode:progress:{video_id}")
-        if raw:
-            import json as _json
-            payload = _json.loads(raw)
-            active_stage = payload.get("stage", "")
-            if active_stage not in ("", "queued", "completed", "failed"):
-                logger.warning("Skipping duplicate transcode task for %s (stage=%s)", video_id, active_stage)
-                return
-    finally:
-        await r.aclose()
+    raw = await redis_pool.get(f"transcode:progress:{video_id}")
+    if raw:
+        import json as _json
+        payload = _json.loads(raw)
+        active_stage = payload.get("stage", "")
+        if active_stage not in ("", "queued", "completed", "failed"):
+            logger.warning("Skipping duplicate transcode task for %s (stage=%s)", video_id, active_stage)
+            return
 
     job_id: uuid.UUID | None = None
     async with async_session() as db:
@@ -78,7 +70,7 @@ async def _transcode_pipeline(video_id: uuid.UUID) -> None:
                 return
 
             # Create transcode job record
-            job = TranscodeJob(video_id=video_id, status="processing", started_at=datetime.utcnow())
+            job = TranscodeJob(video_id=video_id, status="processing", started_at=datetime.now(timezone.utc))
             db.add(job)
             await db.flush()
             job_id = job.id
@@ -307,7 +299,7 @@ async def _transcode_pipeline(video_id: uuid.UUID) -> None:
             # 10. Mark video as ready
             await _publish_progress(video_id, 97, "finalizing")
             video.status = "ready"
-            video.published_at = datetime.utcnow()
+            video.published_at = datetime.now(timezone.utc)
 
             # Update job
             result = await db.execute(select(TranscodeJob).where(TranscodeJob.id == job_id))
@@ -315,7 +307,7 @@ async def _transcode_pipeline(video_id: uuid.UUID) -> None:
             if job:
                 job.status = "completed"
                 job.progress = 100
-                job.completed_at = datetime.utcnow()
+                job.completed_at = datetime.now(timezone.utc)
 
             await db.commit()
             await _publish_progress(video_id, 100, "completed")
@@ -348,7 +340,7 @@ async def _transcode_pipeline(video_id: uuid.UUID) -> None:
                         if j:
                             j.status = "failed"
                             j.error_message = str(exc)
-                            j.completed_at = datetime.utcnow()
+                            j.completed_at = datetime.now(timezone.utc)
 
                     await err_db.commit()
 

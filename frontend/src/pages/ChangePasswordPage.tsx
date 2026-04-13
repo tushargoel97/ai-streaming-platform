@@ -54,8 +54,9 @@ export default function ChangePasswordPage() {
           {error && <p className="text-sm text-red-500">{error}</p>}
 
           <div>
-            <label className="mb-1 block text-xs text-gray-400">Current Password</label>
+            <label htmlFor="cp-current" className="mb-1 block text-xs text-gray-400">Current Password</label>
             <input
+              id="cp-current"
               type="password"
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
@@ -65,8 +66,9 @@ export default function ChangePasswordPage() {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-gray-400">New Password</label>
+            <label htmlFor="cp-new" className="mb-1 block text-xs text-gray-400">New Password</label>
             <input
+              id="cp-new"
               type="password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
@@ -77,8 +79,9 @@ export default function ChangePasswordPage() {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-gray-400">Confirm New Password</label>
+            <label htmlFor="cp-confirm" className="mb-1 block text-xs text-gray-400">Confirm New Password</label>
             <input
+              id="cp-confirm"
               type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}

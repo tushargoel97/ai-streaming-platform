@@ -57,7 +57,7 @@ export default function WatchlistPage() {
   const totalPages = Math.ceil(total / pageSize);
 
   return (
-    <div className="px-12 pt-24">
+    <div className="px-4 sm:px-8 lg:px-12 pt-24">
       <div className="mb-6 flex items-center gap-3">
         <Bookmark size={24} />
         <h1 className="text-2xl font-bold">My Watchlist</h1>

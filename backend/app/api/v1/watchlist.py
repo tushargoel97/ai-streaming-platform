@@ -1,14 +1,16 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from app.auth.permissions import get_current_user, optional_user
 from app.database import get_db
 from app.models.analytics import VideoReaction, ViewEvent, WatchHistory, Watchlist
 from app.models.user import User
 from app.models.video import Video
+from app.schemas.video import VideoResponse
 from app.schemas.watchlist import ReactionRequest, ReactionResponse, WatchlistResponse
 
 router = APIRouter(tags=["watchlist"])
@@ -36,18 +38,32 @@ async def get_watchlist(
     result = await db.execute(query)
     items = result.scalars().all()
 
-    # Load video details for each item
+    # Load all videos in one query with eagerly-loaded relationships
+    video_ids = [item.video_id for item in items]
+    if video_ids:
+        video_result = await db.execute(
+            select(Video)
+            .where(Video.id.in_(video_ids), Video.status == "ready")
+            .options(
+                selectinload(Video.categories),
+                selectinload(Video.tenant_videos),
+                selectinload(Video.qualities),
+                selectinload(Video.audio_tracks),
+                selectinload(Video.subtitle_tracks),
+            )
+        )
+        video_map = {v.id: v for v in video_result.scalars().all()}
+    else:
+        video_map = {}
+
     response_items = []
     for item in items:
-        video_result = await db.execute(
-            select(Video).where(Video.id == item.video_id, Video.status == "ready")
-        )
-        video = video_result.scalar_one_or_none()
+        v = video_map.get(item.video_id)
         response_items.append({
             "id": item.id,
             "video_id": item.video_id,
             "added_at": item.added_at,
-            "video": video,
+            "video": VideoResponse.from_video(v) if v else None,
         })
 
     return WatchlistResponse(items=response_items, total=total, page=page, page_size=page_size)
@@ -108,8 +124,6 @@ async def check_watchlist_status(
 
 # ─── Reactions (Like / Dislike) ──────────────────────────────────────────────
 
-REACTION_THRESHOLD = 0.7  # User must watch 70% of the video
-
 
 @router.post("/videos/{video_id}/react", response_model=ReactionResponse)
 async def react_to_video(
@@ -127,21 +141,6 @@ async def react_to_video(
     video = video_result.scalar_one_or_none()
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
-
-    # Check watch progress — user must have watched >= 70% of the video
-    history_result = await db.execute(
-        select(WatchHistory).where(
-            WatchHistory.user_id == user.id, WatchHistory.video_id == video_id
-        )
-    )
-    history = history_result.scalar_one_or_none()
-
-    if not history or (video.duration > 0 and (history.progress / video.duration) < REACTION_THRESHOLD):
-        watched_pct = int((history.progress / video.duration * 100)) if history and video.duration > 0 else 0
-        raise HTTPException(
-            status_code=403,
-            detail=f"You must watch at least 70% of the video to react. Current progress: {watched_pct}%",
-        )
 
     # Upsert reaction
     existing = await db.execute(
@@ -236,21 +235,24 @@ async def save_watch_progress(
     )
     history = result.scalar_one_or_none()
     if history:
+        # Capture state before any mutations
+        was_below = not history.completed
+
         # Detect new viewing session: if progress dropped significantly (< 10% of duration),
         # user is rewatching — reset progress and completed flag
         is_rewatch = progress < video.duration * 0.1 and history.progress > video.duration * 0.1
         if is_rewatch:
             history.completed = False
+            was_below = True
 
         # Increment watch_count when crossing 70% threshold for the first time in this session
-        was_below = not history.completed
         now_above = pct >= 0.7
         if was_below and now_above:
             history.watch_count = (history.watch_count or 0) + 1
 
         history.progress = progress
         history.completed = completed or (was_below and now_above)
-        history.last_watched_at = datetime.utcnow()
+        history.last_watched_at = datetime.now(timezone.utc)
     else:
         first_watch_count = 1 if pct >= 0.7 else 0
         db.add(WatchHistory(
@@ -263,10 +265,9 @@ async def save_watch_progress(
 
     await db.flush()
 
-    # Increment view count on first watch (progress > 5 seconds)
+    # Record a ViewEvent for analytics on first watch (progress > 5 seconds).
+    # view_count increment is handled by the WebSocket player session to avoid double-counting.
     if not history and progress >= 5:
-        video.view_count = (video.view_count or 0) + 1
-        # Record a ViewEvent for analytics
         db.add(ViewEvent(
             video_id=video_id,
             user_id=user.id,
@@ -274,10 +275,6 @@ async def save_watch_progress(
             ip_address=request.client.host if request.client else None,
             user_agent=(request.headers.get("user-agent") or "")[:500],
         ))
-    elif history:
-        # Update duration_watched on the most recent ViewEvent for this user+video
-        # (best-effort — keeps analytics roughly accurate without creating events per heartbeat)
-        pass
 
     watch_count = history.watch_count if history else (1 if pct >= 0.7 else 0)
     pct_display = min(round(pct * 100, 1), 100)

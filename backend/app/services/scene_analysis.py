@@ -16,7 +16,7 @@ import re
 import uuid
 
 import httpx
-import redis.asyncio as aioredis
+from app.database import redis_pool
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,15 +29,11 @@ logger = logging.getLogger(__name__)
 
 async def _publish_scene_progress(video_id: uuid.UUID, percent: float, stage: str) -> None:
     """Store scene-analysis progress in Redis for SSE consumption."""
-    r = aioredis.from_url(settings.redis_url)
-    try:
-        await r.set(
-            f"analyze:progress:{video_id}",
-            json.dumps({"percent": round(percent, 1), "stage": stage}),
-            ex=3600,
-        )
-    finally:
-        await r.aclose()
+    await redis_pool.set(
+        f"analyze:progress:{video_id}",
+        json.dumps({"percent": round(percent, 1), "stage": stage}),
+        ex=3600,
+    )
 
 # Max frames to extract and send to the vision model
 _MAX_VISION_FRAMES = 5

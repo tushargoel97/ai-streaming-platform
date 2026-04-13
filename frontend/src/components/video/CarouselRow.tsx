@@ -52,7 +52,7 @@ export default function CarouselRow({
   return (
     <section className="group/row relative py-6">
       {/* ── Section header ─────────────────────────────────── */}
-      <div className="mb-5 px-12">
+      <div className="mb-5 px-4 sm:px-8 lg:px-12">
         {ranked ? (
           /* Cineby-style "TOP 10 CONTENT TODAY" header */
           <div className="flex items-end gap-4">
@@ -120,7 +120,7 @@ export default function CarouselRow({
         {/* Cards */}
         <div
           ref={scrollRef}
-          className="scrollbar-none flex overflow-x-auto px-12"
+          className="scrollbar-none flex overflow-x-auto px-4 sm:px-8 lg:px-12"
           style={{ gap: ranked ? "0px" : "10px" }}
         >
           {videos.map((v, i) =>

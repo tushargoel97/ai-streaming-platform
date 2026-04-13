@@ -4,18 +4,11 @@ import {
   AlertTriangle, Clock, TrendingUp, BarChart3,
 } from "lucide-react";
 import { api } from "@/api/client";
+import { formatBytes } from "@/lib/utils";
 import type { AnalyticsOverview } from "@/types/api";
 
 interface ViewTrendEntry { date: string; views: number }
 interface TopVideo { id: string; title: string; view_count: number; recent_views: number }
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
-}
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;

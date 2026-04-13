@@ -4,7 +4,7 @@ import asyncio
 import json
 import uuid
 
-import redis.asyncio as aioredis
+from app.database import redis_pool
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
@@ -30,23 +30,19 @@ async def transcode_status_sse(
     """
 
     async def event_stream():
-        r = aioredis.from_url(settings.redis_url)
-        try:
-            while True:
-                data = await r.get(f"transcode:progress:{video_id}")
-                if data:
-                    payload = json.loads(data)
-                    yield f"data: {json.dumps(payload)}\n\n"
+        while True:
+            data = await redis_pool.get(f"transcode:progress:{video_id}")
+            if data:
+                payload = json.loads(data)
+                yield f"data: {json.dumps(payload)}\n\n"
 
-                    # Stop streaming when done or failed
-                    if payload.get("percent", 0) >= 100 or payload.get("stage") == "failed":
-                        break
-                else:
-                    yield f"data: {json.dumps({'percent': 0, 'stage': 'queued'})}\n\n"
+                # Stop streaming when done or failed
+                if payload.get("percent", 0) >= 100 or payload.get("stage") == "failed":
+                    break
+            else:
+                yield f"data: {json.dumps({'percent': 0, 'stage': 'queued'})}\n\n"
 
-                await asyncio.sleep(1)
-        finally:
-            await r.aclose()
+            await asyncio.sleep(1)
 
     return StreamingResponse(
         event_stream(),
@@ -67,20 +63,16 @@ async def analyze_status_sse(
     """SSE endpoint streaming scene-analysis progress for a video."""
 
     async def event_stream():
-        r = aioredis.from_url(settings.redis_url)
-        try:
-            while True:
-                data = await r.get(f"analyze:progress:{video_id}")
-                if data:
-                    payload = json.loads(data)
-                    yield f"data: {json.dumps(payload)}\n\n"
-                    if payload.get("percent", 0) >= 100 or payload.get("stage") == "failed":
-                        break
-                else:
-                    yield f"data: {json.dumps({'percent': 0, 'stage': 'queued'})}\n\n"
-                await asyncio.sleep(1)
-        finally:
-            await r.aclose()
+        while True:
+            data = await redis_pool.get(f"analyze:progress:{video_id}")
+            if data:
+                payload = json.loads(data)
+                yield f"data: {json.dumps(payload)}\n\n"
+                if payload.get("percent", 0) >= 100 or payload.get("stage") == "failed":
+                    break
+            else:
+                yield f"data: {json.dumps({'percent': 0, 'stage': 'queued'})}\n\n"
+            await asyncio.sleep(1)
 
     return StreamingResponse(
         event_stream(),

@@ -27,11 +27,13 @@ function HeroBanner({
   onSeeMore,
   onPause,
   onResume,
+  suspended,
 }: {
   video: Video;
   onSeeMore: () => void;
   onPause: () => void;
   onResume: () => void;
+  suspended?: boolean;
 }) {
   const navigate = useNavigate();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -77,6 +79,17 @@ function HeroBanner({
     }
   }, [showTrailer, video.manifest_url]);
 
+  // Pause hero video when modal is open, resume when closed
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    if (suspended) {
+      el.pause();
+    } else if (showTrailer) {
+      el.play().catch(() => {});
+    }
+  }, [suspended, showTrailer]);
+
   useEffect(() => {
     if (videoRef.current) videoRef.current.muted = muted;
   }, [muted]);
@@ -103,7 +116,8 @@ function HeroBanner({
           ref={videoRef}
           muted={muted}
           playsInline
-          className="absolute inset-0 h-full w-full object-cover"
+          className="absolute inset-0 h-full w-full object-cover transition-opacity duration-500"
+          style={{ opacity: suspended ? 0 : 1 }}
         />
       )}
 
@@ -116,7 +130,7 @@ function HeroBanner({
       }} />
 
       {/* Content */}
-      <div className="relative z-10 max-w-2xl px-12 pb-24">
+      <div className="relative z-10 max-w-2xl px-4 sm:px-8 lg:px-12 pb-24">
         <h1 className="text-6xl font-black leading-tight tracking-tight drop-shadow-2xl">
           {video.title}
         </h1>
@@ -284,7 +298,7 @@ export default function HomePage() {
   }, [heroCandidates.length]);
 
   useEffect(() => {
-    if (heroCandidates.length <= 1 || heroPaused) {
+    if (heroCandidates.length <= 1 || heroPaused || detailVideo) {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
       lastTickRef.current = Date.now();
@@ -295,7 +309,7 @@ export default function HomePage() {
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [heroCandidates.length, heroPaused, tick]);
+  }, [heroCandidates.length, heroPaused, detailVideo, tick]);
 
   // Reset progress when index changes (including manual dot click)
   useEffect(() => {
@@ -376,6 +390,7 @@ export default function HomePage() {
             onSeeMore={() => setDetailVideo(heroVideo)}
             onPause={() => setHeroPaused(true)}
             onResume={() => setHeroPaused(false)}
+            suspended={!!detailVideo}
           />
           <HeroDots
             count={heroCandidates.length}

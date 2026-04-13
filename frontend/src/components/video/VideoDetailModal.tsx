@@ -5,6 +5,7 @@ import Hls from "hls.js";
 import type { Video, Series, Season } from "@/types/api";
 import { api } from "@/api/client";
 import { useAuthStore } from "@/stores/authStore";
+import { formatDurationHuman as formatDuration } from "@/lib/utils";
 
 interface Props {
   video: Video;
@@ -19,13 +20,6 @@ interface VideoSummary {
   thumbnail_url: string;
   tags: string[];
   imdb_rating?: number | null;
-}
-
-function formatDuration(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
 }
 
 // ── Mute / Unmute SVGs ────────────────────────────────────────────────────────
@@ -171,26 +165,34 @@ export default function VideoDetailModal({ video, onClose }: Props) {
     };
   }, [onClose]);
 
-  // HLS preview
+  // HLS preview — start at the same preview point as the home page hero/cards
   useEffect(() => {
     if (!video.manifest_url || !videoRef.current) return;
     const el = videoRef.current;
+    const previewStart = video.preview_start_time
+      ?? (video.duration > 0 ? video.duration * 0.2 : 30);
+
+    const seekAndPlay = () => {
+      el.currentTime = previewStart;
+      el.play().catch(() => {});
+    };
+
     if (!video.manifest_url.endsWith(".m3u8")) {
       el.src = video.manifest_url;
-      el.play().catch(() => {});
+      el.addEventListener("loadedmetadata", seekAndPlay, { once: true });
       return () => { el.removeAttribute("src"); el.load(); };
     }
     if (Hls.isSupported()) {
       const hls = new Hls({ maxBufferLength: 10, startLevel: 0 });
       hls.loadSource(video.manifest_url);
       hls.attachMedia(el);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => el.play().catch(() => {}));
+      hls.on(Hls.Events.MANIFEST_PARSED, seekAndPlay);
       return () => hls.destroy();
     } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
       el.src = video.manifest_url;
-      el.play().catch(() => {});
+      el.addEventListener("loadedmetadata", seekAndPlay, { once: true });
     }
-  }, [video.manifest_url]);
+  }, [video.manifest_url, video.preview_start_time, video.duration]);
 
   useEffect(() => {
     if (videoRef.current) videoRef.current.muted = muted;

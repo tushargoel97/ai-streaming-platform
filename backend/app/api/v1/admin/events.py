@@ -1,6 +1,5 @@
-import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
@@ -16,6 +15,7 @@ from app.models.live import LiveStream
 from app.models.video import Video
 from app.models.user import User
 from app.tenant.context import get_tenant_id
+from app.utils.slug import slugify
 
 router = APIRouter(prefix="/admin/events", tags=["admin-events"])
 
@@ -77,14 +77,6 @@ class HighlightUpdate(BaseModel):
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-
-
-def _slugify(text: str) -> str:
-    text = text.lower().strip()
-    text = re.sub(r"[^\w\s-]", "", text)
-    text = re.sub(r"[\s_]+", "-", text)
-    text = re.sub(r"-+", "-", text)
-    return text
 
 
 def _serialize_event(e: Event, highlight_count: int = 0) -> dict:
@@ -163,13 +155,18 @@ async def list_events(
     result = await db.execute(query)
     events = result.scalars().all()
 
-    items = []
-    for e in events:
-        hc = (await db.execute(
-            select(func.count()).where(EventHighlight.event_id == e.id)
-        )).scalar() or 0
-        items.append(_serialize_event(e, hc))
+    # Batch highlight counts in one query
+    event_ids = [e.id for e in events]
+    highlight_counts: dict = {}
+    if event_ids:
+        count_rows = await db.execute(
+            select(EventHighlight.event_id, func.count())
+            .where(EventHighlight.event_id.in_(event_ids))
+            .group_by(EventHighlight.event_id)
+        )
+        highlight_counts = dict(count_rows.all())
 
+    items = [_serialize_event(e, highlight_counts.get(e.id, 0)) for e in events]
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
@@ -215,7 +212,7 @@ async def create_event(
     if not comp.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Competition not found for this tenant")
 
-    base_slug = _slugify(body.title)
+    base_slug = slugify(body.title)
     existing = await db.execute(
         select(Event).where(Event.tenant_id == tid, Event.slug == base_slug)
     )
@@ -279,7 +276,7 @@ async def update_event(
     for field, value in update_data.items():
         setattr(event, field, value)
 
-    event.updated_at = datetime.utcnow()
+    event.updated_at = datetime.now(timezone.utc)
     await db.flush()
     await db.refresh(event, ["competition"])
     return _serialize_event(event)
@@ -325,7 +322,7 @@ async def link_stream_to_event(
         raise HTTPException(status_code=404, detail="Live stream not found for this tenant")
 
     event.live_stream_id = body.live_stream_id
-    event.updated_at = datetime.utcnow()
+    event.updated_at = datetime.now(timezone.utc)
     await db.flush()
     return _serialize_event(event)
 
@@ -349,7 +346,7 @@ async def link_replay_to_event(
         raise HTTPException(status_code=404, detail="Video not found")
 
     event.replay_video_id = body.video_id
-    event.updated_at = datetime.utcnow()
+    event.updated_at = datetime.now(timezone.utc)
     await db.flush()
     return _serialize_event(event)
 

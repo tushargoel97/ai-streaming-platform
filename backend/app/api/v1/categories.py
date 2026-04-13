@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,10 +10,15 @@ router = APIRouter(prefix="/categories", tags=["categories"])
 
 @router.get("")
 async def list_categories(
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """List all categories (public)."""
-    query = select(Category).order_by(Category.sort_order.asc(), Category.name.asc())
+    query = select(Category)
+    tenant = getattr(request.state, "tenant", None)
+    if tenant:
+        query = query.where(Category.tenant_id == tenant.id)
+    query = query.order_by(Category.sort_order.asc(), Category.name.asc())
     result = await db.execute(query)
     categories = result.scalars().all()
     return [

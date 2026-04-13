@@ -1,10 +1,9 @@
 import json
 import os
-import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
-import redis.asyncio as aioredis
+from app.database import redis_pool
 
 import aiofiles
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
@@ -23,17 +22,9 @@ from app.schemas.video import VideoListResponse, VideoResponse, VideoUpdateReque
 from app.services.transcode_service import start_transcode
 from app.storage.factory import get_storage_backend
 from app.utils.filename_parser import parse_filename
+from app.utils.slug import slugify
 
 router = APIRouter(prefix="/admin/videos", tags=["admin-videos"])
-
-
-def _slugify(text: str) -> str:
-    """Convert text to URL-friendly slug."""
-    text = text.lower().strip()
-    text = re.sub(r"[^\w\s-]", "", text)
-    text = re.sub(r"[\s_]+", "-", text)
-    text = re.sub(r"-+", "-", text)
-    return text
 
 
 @router.post("/upload", response_model=VideoResponse, status_code=status.HTTP_201_CREATED)
@@ -76,7 +67,7 @@ async def upload_video(
     os.unlink(tmp_path)
 
     # Build slug
-    base_slug = _slugify(title)
+    base_slug = slugify(title)
     slug = f"{base_slug}-{str(video_id)[:8]}"
 
     # Parse tags
@@ -226,7 +217,7 @@ async def update_video(
         for tid in tenant_ids:
             db.add(TenantVideo(tenant_id=tid, video_id=video_id))
 
-    video.updated_at = datetime.utcnow()
+    video.updated_at = datetime.now(timezone.utc)
 
     # Regenerate embedding if title/description/tags changed
     embedding_fields = {"title", "description", "tags"}
@@ -265,7 +256,7 @@ async def delete_video(
     await storage.delete_prefix(f"thumbnails/{video_id}")
 
     video.status = "deleted"
-    video.updated_at = datetime.utcnow()
+    video.updated_at = datetime.now(timezone.utc)
 
 
 @router.post("/{video_id}/retranscode", response_model=VideoResponse)
@@ -284,7 +275,7 @@ async def retranscode_video(
         raise HTTPException(status_code=404, detail="Video not found")
 
     video.status = "processing"
-    video.updated_at = datetime.utcnow()
+    video.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(video, ["categories", "tenant_videos"])
 
@@ -311,15 +302,11 @@ async def analyze_preview(
         raise HTTPException(status_code=400, detail="Video has no source file")
 
     # Overwrite any stale "completed" key so the SSE client doesn't fire onComplete immediately
-    r = aioredis.from_url(settings.redis_url)
-    try:
-        await r.set(
-            f"analyze:progress:{video_id}",
-            json.dumps({"percent": 0, "stage": "queued"}),
-            ex=3600,
-        )
-    finally:
-        await r.aclose()
+    await redis_pool.set(
+        f"analyze:progress:{video_id}",
+        json.dumps({"percent": 0, "stage": "queued"}),
+        ex=3600,
+    )
 
     def _enqueue():
         from app.worker.tasks import analyze_scene
@@ -344,7 +331,7 @@ async def toggle_featured(
         raise HTTPException(status_code=404, detail="Video not found")
 
     video.is_featured = not video.is_featured
-    video.updated_at = datetime.utcnow()
+    video.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(video, ["categories", "tenant_videos"])
     return VideoResponse.from_video(video)
@@ -397,7 +384,7 @@ async def set_intro_timestamps(
 
     video.intro_start = body.intro_start
     video.intro_end = body.intro_end
-    video.updated_at = datetime.utcnow()
+    video.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(video, ["categories", "tenant_videos"])
     return VideoResponse.from_video(video)

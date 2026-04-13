@@ -1,6 +1,5 @@
-import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
@@ -11,6 +10,7 @@ from app.database import get_db
 from app.models.talent import Talent
 from app.models.user import User
 from app.models.video import VideoTalent
+from app.utils.slug import slugify
 from app.schemas.talent import (
     TalentCreateRequest,
     TalentListResponse,
@@ -22,21 +22,13 @@ from app.schemas.talent import (
 router = APIRouter(prefix="/admin/talents", tags=["admin-talents"])
 
 
-def _slugify(text: str) -> str:
-    text = text.lower().strip()
-    text = re.sub(r"[^\w\s-]", "", text)
-    text = re.sub(r"[\s_]+", "-", text)
-    text = re.sub(r"-+", "-", text)
-    return text
-
-
 @router.post("", response_model=TalentResponse, status_code=status.HTTP_201_CREATED)
 async def create_talent(
     body: TalentCreateRequest,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_admin),
 ):
-    base_slug = _slugify(body.name)
+    base_slug = slugify(body.name)
     # Check slug uniqueness
     existing = await db.execute(select(Talent).where(Talent.slug == base_slug))
     if existing.scalar_one_or_none():
@@ -107,9 +99,15 @@ async def update_talent(
         setattr(talent, field, value)
 
     if "name" in update_data:
-        talent.slug = _slugify(update_data["name"])
+        new_slug = slugify(update_data["name"])
+        existing = await db.execute(
+            select(Talent.id).where(Talent.slug == new_slug, Talent.id != talent_id)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail="A talent with that name already exists")
+        talent.slug = new_slug
 
-    talent.updated_at = datetime.utcnow()
+    talent.updated_at = datetime.now(timezone.utc)
     return talent
 
 
