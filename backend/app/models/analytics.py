@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import String, Float, BigInteger, Boolean, Integer, ForeignKey, UniqueConstraint
+from sqlalchemy import Index, String, Float, BigInteger, Boolean, Integer, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, INET
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -11,7 +11,11 @@ from app.database import Base
 
 class WatchHistory(Base):
     __tablename__ = "watch_history"
-    __table_args__ = (UniqueConstraint("user_id", "video_id"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "video_id"),
+        Index("ix_watch_history_user_watched", "user_id", "last_watched_at"),
+        Index("ix_watch_history_video", "video_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -29,6 +33,9 @@ class WatchHistory(Base):
 
 class ViewEvent(Base):
     __tablename__ = "view_events"
+    __table_args__ = (
+        Index("ix_view_events_video_created", "video_id", "created_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     video_id: Mapped[uuid.UUID] = mapped_column(

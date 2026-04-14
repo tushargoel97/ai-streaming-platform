@@ -14,5 +14,6 @@ RUN pip install --no-cache-dir .
 # Source code mounted as volume in dev, but copy for layer caching
 COPY . .
 
-# Run with auto-reload for development
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Production: gunicorn with multiple uvicorn workers
+# Dev override: docker-compose can override with uvicorn --reload
+CMD ["gunicorn", "app.main:app", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "120", "--graceful-timeout", "30"]

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import String, Text, Integer, Float, BigInteger, Boolean, ForeignKey
+from sqlalchemy import Index, String, Text, Integer, Float, BigInteger, Boolean, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -11,6 +11,13 @@ from app.database import Base
 
 class Video(Base):
     __tablename__ = "videos"
+    __table_args__ = (
+        Index("ix_videos_status_published", "status", "published_at"),
+        Index("ix_videos_status_views", "status", "view_count"),
+        Index("ix_videos_status", "status"),
+        Index("ix_videos_is_featured", "is_featured", postgresql_where="is_featured = true"),
+        Index("ix_videos_series_season", "series_id", "season_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     category_id: Mapped[Optional[uuid.UUID]] = mapped_column(
@@ -88,6 +95,9 @@ class Video(Base):
 
 class VideoCategory(Base):
     __tablename__ = "video_categories"
+    __table_args__ = (
+        Index("ix_video_categories_category", "category_id"),
+    )
 
     video_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("videos.id", ondelete="CASCADE"), primary_key=True

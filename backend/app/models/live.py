@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import String, Text, Integer, Boolean, ForeignKey, Numeric
+from sqlalchemy import Index, String, Text, Integer, Boolean, ForeignKey, Numeric
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -12,6 +12,10 @@ from app.database import Base
 
 class LiveStream(Base):
     __tablename__ = "live_streams"
+    __table_args__ = (
+        Index("ix_live_streams_status", "status"),
+        Index("ix_live_streams_tenant_status", "tenant_id", "status"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(

@@ -2,11 +2,12 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.middleware.rate_limit import limiter
 from app.services import ai_search_service
 from app.services.ai_config import build_llm_config, get_ai_settings
 
@@ -31,7 +32,9 @@ class AISearchResponse(BaseModel):
 
 
 @router.post("/ai", response_model=AISearchResponse)
+@limiter.limit("10/minute")
 async def ai_search(
+    request: Request,
     body: AISearchRequest,
     db: AsyncSession = Depends(get_db),
 ):

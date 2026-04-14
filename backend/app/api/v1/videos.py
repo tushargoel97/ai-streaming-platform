@@ -1,3 +1,4 @@
+import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -6,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.auth.permissions import optional_user
-from app.database import get_db
+from app.database import get_db, redis_pool
 from app.models.subscription import UserSubscription
 from app.models.user import User
 from app.models.video import Video, VideoCategory
@@ -14,6 +15,20 @@ from app.schemas.video import VideoListResponse, VideoResponse
 from app.storage.urls import resolve_media_url
 
 router = APIRouter(prefix="/videos", tags=["videos"])
+
+
+async def _cache_get(key: str) -> str | None:
+    try:
+        return await redis_pool.get(key)
+    except Exception:
+        return None
+
+
+async def _cache_set(key: str, value: str, ttl: int = 60) -> None:
+    try:
+        await redis_pool.set(key, value, ex=ttl)
+    except Exception:
+        pass
 
 
 @router.get("", response_model=VideoListResponse)
@@ -88,6 +103,10 @@ async def list_videos(
 @router.get("/genres", response_model=list[str])
 async def list_genres(db: AsyncSession = Depends(get_db)):
     """Return all unique tags used across ready videos, sorted alphabetically."""
+    cached = await _cache_get("videos:genres")
+    if cached:
+        return json.loads(cached)
+
     result = await db.execute(
         select(func.unnest(Video.tags))
         .where(Video.status == "ready")
@@ -95,6 +114,7 @@ async def list_genres(db: AsyncSession = Depends(get_db)):
         .distinct()
     )
     tags = sorted([row[0] for row in result.all()])
+    await _cache_set("videos:genres", json.dumps(tags), ttl=600)
     return tags
 
 
@@ -103,6 +123,10 @@ async def get_featured_videos(
     db: AsyncSession = Depends(get_db),
 ):
     """Get featured videos for the hero section."""
+    cached = await _cache_get("videos:featured")
+    if cached:
+        return json.loads(cached)
+
     result = await db.execute(
         select(Video)
         .options(
@@ -115,7 +139,10 @@ async def get_featured_videos(
         .order_by(Video.updated_at.desc())
         .limit(10)
     )
-    return result.scalars().all()
+    videos = result.scalars().all()
+    serialized = [VideoResponse.model_validate(v).model_dump(mode="json") for v in videos]
+    await _cache_set("videos:featured", json.dumps(serialized), ttl=120)
+    return videos
 
 
 @router.get("/trending", response_model=list[VideoResponse])
@@ -123,6 +150,10 @@ async def get_trending_videos(
     db: AsyncSession = Depends(get_db),
 ):
     """Get trending videos by view count."""
+    cached = await _cache_get("videos:trending")
+    if cached:
+        return json.loads(cached)
+
     result = await db.execute(
         select(Video)
         .options(
@@ -135,7 +166,10 @@ async def get_trending_videos(
         .order_by(Video.view_count.desc())
         .limit(20)
     )
-    return result.scalars().all()
+    videos = result.scalars().all()
+    serialized = [VideoResponse.model_validate(v).model_dump(mode="json") for v in videos]
+    await _cache_set("videos:trending", json.dumps(serialized), ttl=60)
+    return videos
 
 
 @router.get("/{video_id}")
@@ -150,30 +184,41 @@ async def get_video(
     If the video requires a subscription tier, manifest_url is stripped
     for users without sufficient access. An `access` object is included.
     """
-    result = await db.execute(
-        select(Video)
-        .where(Video.id == video_id, Video.status == "ready")
-        .options(
-            selectinload(Video.qualities),
-            selectinload(Video.audio_tracks),
-            selectinload(Video.subtitle_tracks),
-            selectinload(Video.categories),
+    # Try cached video metadata
+    cache_key = f"video:{video_id}"
+    cached = await _cache_get(cache_key)
+    if cached:
+        data = json.loads(cached)
+        video_min_tier = data.get("min_tier_level", 0)
+    else:
+        result = await db.execute(
+            select(Video)
+            .where(Video.id == video_id, Video.status == "ready")
+            .options(
+                selectinload(Video.qualities),
+                selectinload(Video.audio_tracks),
+                selectinload(Video.subtitle_tracks),
+                selectinload(Video.categories),
+            )
         )
-    )
-    video = result.scalar_one_or_none()
-    if not video:
-        raise HTTPException(status_code=404, detail="Video not found")
+        video = result.scalar_one_or_none()
+        if not video:
+            raise HTTPException(status_code=404, detail="Video not found")
 
-    response = VideoResponse.model_validate(video)
-    data = response.model_dump()
+        response = VideoResponse.model_validate(video)
+        data = response.model_dump(mode="json")
+        video_min_tier = video.min_tier_level
+        await _cache_set(cache_key, json.dumps(data), ttl=300)
+
+    # Access check is always computed fresh (user-specific)
 
     # Build access info
-    if video.min_tier_level == 0:
+    if video_min_tier == 0:
         data["access"] = {"has_access": True, "reason": "free"}
     elif user and user.role in ("admin", "superadmin"):
         data["access"] = {"has_access": True, "reason": "admin"}
     elif not user:
-        data["access"] = {"has_access": False, "reason": "login_required", "min_tier_level": video.min_tier_level}
+        data["access"] = {"has_access": False, "reason": "login_required", "min_tier_level": video_min_tier}
         data["manifest_url"] = ""
         data["manifest_path"] = None
     else:
@@ -193,14 +238,14 @@ async def get_video(
             if sub and sub.tier:
                 tier_level = sub.tier.tier_level
 
-        if tier_level >= video.min_tier_level:
+        if tier_level >= video_min_tier:
             data["access"] = {"has_access": True, "reason": "subscribed"}
         else:
             data["access"] = {
                 "has_access": False,
                 "reason": "tier_too_low",
                 "current_tier_level": tier_level,
-                "min_tier_level": video.min_tier_level,
+                "min_tier_level": video_min_tier,
             }
             data["manifest_url"] = ""
             data["manifest_path"] = None

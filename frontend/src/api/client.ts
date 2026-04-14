@@ -1,8 +1,18 @@
 import { API_URL } from "@/lib/constants";
 
+interface CacheEntry {
+  data: unknown;
+  expires: number;
+}
+
 class ApiClient {
   private baseUrl: string;
   private refreshing: Promise<boolean> | null = null;
+  // In-flight GET deduplication
+  private inFlight = new Map<string, Promise<unknown>>();
+  // SWR-style cache for GET requests
+  private cache = new Map<string, CacheEntry>();
+  private defaultCacheTtl = 30_000; // 30s
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
@@ -51,9 +61,36 @@ class ApiClient {
     if (params) {
       Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
     }
-    let res = await fetch(url.toString(), { headers: this.getHeaders(), signal });
+    const key = url.toString();
+
+    // Return cached data if still fresh
+    const cached = this.cache.get(key);
+    if (cached && cached.expires > Date.now()) {
+      return cached.data as T;
+    }
+
+    // Deduplicate in-flight requests for the same URL
+    const existing = this.inFlight.get(key);
+    if (existing) {
+      return existing as Promise<T>;
+    }
+
+    const promise = this._doGet<T>(key, signal);
+    this.inFlight.set(key, promise);
+    try {
+      const result = await promise;
+      // Cache the result
+      this.cache.set(key, { data: result, expires: Date.now() + this.defaultCacheTtl });
+      return result;
+    } finally {
+      this.inFlight.delete(key);
+    }
+  }
+
+  private async _doGet<T>(url: string, signal?: AbortSignal): Promise<T> {
+    let res = await fetch(url, { headers: this.getHeaders(), signal });
     if (res.status === 401 && await this.refresh()) {
-      res = await fetch(url.toString(), { headers: this.getHeaders(), signal });
+      res = await fetch(url, { headers: this.getHeaders(), signal });
     }
     if (!res.ok) throw new ApiError(res.status, await res.text());
     return res.json();

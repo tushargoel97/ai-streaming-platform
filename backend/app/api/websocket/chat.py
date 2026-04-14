@@ -17,6 +17,7 @@ Protocol (JSON messages):
 Authentication is optional: anonymous users can watch but not send messages.
 """
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 
@@ -25,7 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.auth import decode_token
-from app.database import async_session
+from app.database import async_session, redis_pool
 from app.models.live import LiveStream
 from app.models.user import User
 
@@ -154,18 +155,16 @@ async def live_chat(
 
     await room.connect(conn_id, websocket, username)
 
-    # Update viewer count on the LiveStream record (best-effort)
+    # Track viewer count in Redis (fast INCR, no DB round-trip per connect)
+    redis_key = f"live:viewers:{stream_id}"
     try:
-        async with async_session() as db:
-            result = await db.execute(
-                select(LiveStream).where(LiveStream.id == uuid.UUID(stream_id))
-            )
-            stream = result.scalar_one_or_none()
-            if stream:
-                stream.viewer_count = room.viewer_count
-                if room.viewer_count > stream.peak_viewers:
-                    stream.peak_viewers = room.viewer_count
-                await db.commit()
+        count = await redis_pool.incr(redis_key)
+        await redis_pool.expire(redis_key, 3600)
+        # Update peak in Redis
+        peak_key = f"live:peak:{stream_id}"
+        current_peak = int(await redis_pool.get(peak_key) or 0)
+        if count > current_peak:
+            await redis_pool.set(peak_key, count, ex=86400)
     except Exception:
         pass
 
@@ -192,19 +191,30 @@ async def live_chat(
         pass
     finally:
         await room.disconnect(conn_id)
-        # Update viewer count down
+
+        # Decrement viewer count in Redis
         try:
-            async with async_session() as db:
-                result = await db.execute(
-                    select(LiveStream).where(LiveStream.id == uuid.UUID(stream_id))
-                )
-                stream = result.scalar_one_or_none()
-                if stream:
-                    stream.viewer_count = room.viewer_count
-                    await db.commit()
+            count = await redis_pool.decr(redis_key)
+            if count <= 0:
+                await redis_pool.delete(redis_key)
         except Exception:
             pass
 
-        # Clean up empty rooms
+        # Sync to DB periodically (on last disconnect or every disconnect)
         if room.viewer_count == 0:
+            # Last viewer left: persist final counts to DB
+            try:
+                peak = int(await redis_pool.get(f"live:peak:{stream_id}") or 0)
+                async with async_session() as db:
+                    result = await db.execute(
+                        select(LiveStream).where(LiveStream.id == uuid.UUID(stream_id))
+                    )
+                    stream = result.scalar_one_or_none()
+                    if stream:
+                        stream.viewer_count = 0
+                        if peak > stream.peak_viewers:
+                            stream.peak_viewers = peak
+                        await db.commit()
+            except Exception:
+                pass
             chat_manager.remove_room(stream_id)

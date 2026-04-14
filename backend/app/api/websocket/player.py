@@ -18,17 +18,21 @@ Authentication is optional: anonymous viewers are counted but
 heartbeat data is only persisted for authenticated users.
 """
 
+import asyncio
+import time
 import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.auth.auth import decode_token
 from app.database import async_session
 from app.models.analytics import ViewEvent, WatchHistory
 from app.models.user import User
 from app.models.video import Video
+
+_FLUSH_INTERVAL = 30  # seconds between DB writes for watch progress
 
 router = APIRouter()
 
@@ -124,6 +128,47 @@ async def player_session(
     total_duration_watched = 0.0
     last_time = 0.0
     last_quality = ""
+    last_flush = time.monotonic()
+    pending_progress: float | None = None  # buffered progress, flushed periodically
+
+    async def _flush_progress(progress: float) -> None:
+        """Write buffered progress to DB (single write instead of per-heartbeat)."""
+        if not user_id:
+            return
+        try:
+            async with async_session() as db:
+                vid = uuid.UUID(video_id)
+                result = await db.execute(
+                    select(WatchHistory).where(
+                        WatchHistory.user_id == user_id,
+                        WatchHistory.video_id == vid,
+                    )
+                )
+                wh = result.scalar_one_or_none()
+
+                v_result = await db.execute(
+                    select(Video.duration).where(Video.id == vid)
+                )
+                video_duration = v_result.scalar() or 0
+
+                if wh:
+                    wh.progress = progress
+                    wh.last_watched_at = datetime.now(timezone.utc)
+                    if video_duration > 0 and progress >= video_duration * 0.9:
+                        if not wh.completed:
+                            wh.completed = True
+                            wh.watch_count += 1
+                else:
+                    wh = WatchHistory(
+                        user_id=user_id,
+                        video_id=vid,
+                        progress=progress,
+                    )
+                    db.add(wh)
+
+                await db.commit()
+        except Exception:
+            pass
 
     try:
         while True:
@@ -142,54 +187,27 @@ async def player_session(
                 # Calculate duration since last heartbeat
                 if current_time > last_time:
                     delta = current_time - last_time
-                    # Cap at 60s to handle pauses/seeks
                     if delta <= 60:
                         total_duration_watched += delta
                 last_time = current_time
 
-                # Update watch history for authenticated users
-                if user_id:
-                    try:
-                        async with async_session() as db:
-                            vid = uuid.UUID(video_id)
-                            result = await db.execute(
-                                select(WatchHistory).where(
-                                    WatchHistory.user_id == user_id,
-                                    WatchHistory.video_id == vid,
-                                )
-                            )
-                            wh = result.scalar_one_or_none()
-
-                            # Get video duration for completion check
-                            v_result = await db.execute(
-                                select(Video.duration).where(Video.id == vid)
-                            )
-                            video_duration = v_result.scalar() or 0
-
-                            if wh:
-                                wh.progress = current_time
-                                wh.last_watched_at = datetime.now(timezone.utc)
-                                if video_duration > 0 and current_time >= video_duration * 0.9:
-                                    if not wh.completed:
-                                        wh.completed = True
-                                        wh.watch_count += 1
-                            else:
-                                wh = WatchHistory(
-                                    user_id=user_id,
-                                    video_id=vid,
-                                    progress=current_time,
-                                )
-                                db.add(wh)
-
-                            await db.commit()
-                    except Exception:
-                        pass
+                # Buffer progress, flush to DB periodically
+                pending_progress = current_time
+                now = time.monotonic()
+                if now - last_flush >= _FLUSH_INTERVAL:
+                    await _flush_progress(current_time)
+                    pending_progress = None
+                    last_flush = now
 
     except WebSocketDisconnect:
         pass
     except Exception:
         pass
     finally:
+        # Flush any remaining buffered progress on disconnect
+        if pending_progress is not None:
+            await _flush_progress(pending_progress)
+
         await session.disconnect(conn_id)
 
         # Record a ViewEvent on disconnect
@@ -205,13 +223,12 @@ async def player_session(
                     )
                     db.add(event)
 
-                    # Increment view count on the video
-                    result = await db.execute(
-                        select(Video).where(Video.id == uuid.UUID(video_id))
+                    # Atomic increment avoids lost updates under concurrency
+                    await db.execute(
+                        update(Video)
+                        .where(Video.id == uuid.UUID(video_id))
+                        .values(view_count=Video.view_count + 1)
                     )
-                    video = result.scalar_one_or_none()
-                    if video:
-                        video.view_count += 1
 
                     await db.commit()
             except Exception:

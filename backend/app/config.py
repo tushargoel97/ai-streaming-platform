@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+asyncpg://stream:stream@postgres:5432/streamdb"
 
+    # Database pool
+    db_pool_size: int = 20
+    db_max_overflow: int = 30
+    db_pool_recycle: int = 1800
+    db_pool_timeout: int = 30
+
     # Redis
     redis_url: str = "redis://redis:6379/0"
 
@@ -47,6 +53,9 @@ class Settings(BaseSettings):
     transcode_preset: str = "veryfast"
     transcode_threads: int = 0
     ffmpeg_hwaccel: str = "auto"
+
+    # Web server
+    web_workers: int = 4  # gunicorn worker processes
 
     # Worker
     worker_concurrency: int = 2  # parallel Celery worker processes

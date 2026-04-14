@@ -2,12 +2,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.database import engine
 from app.api.router import api_router
 from app.api.websocket.chat import router as ws_chat_router
 from app.api.websocket.player import router as ws_player_router
+from app.middleware.rate_limit import limiter, rate_limit_exceeded_handler
 from app.tenant.middleware import TenantMiddleware
 
 
@@ -43,6 +45,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Rate limiting
+    application.state.limiter = limiter
+    application.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
     application.include_router(api_router, prefix="/api/v1")
     application.include_router(ws_chat_router)

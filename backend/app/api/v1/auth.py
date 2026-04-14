@@ -2,12 +2,13 @@ import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.auth import create_access_token, create_refresh_token, decode_token
+from app.middleware.rate_limit import limiter
 from app.auth.oauth_facebook import exchange_facebook_code, get_facebook_auth_url
 from app.auth.oauth_google import exchange_google_code, get_google_auth_url
 from app.auth.password import hash_password, verify_password
@@ -38,7 +39,8 @@ def _find_user_query(identifier: str):
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def register(request: Request, body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     """Register a new viewer account with email + password.
 
     If the email already exists from an SSO sign-in (no password set),
@@ -93,7 +95,8 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(_find_user_query(body.identifier))
     user = result.scalar_one_or_none()
 
@@ -139,7 +142,8 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/otp/request")
-async def request_otp(body: OTPRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def request_otp(request: Request, body: OTPRequest, db: AsyncSession = Depends(get_db)):
     """Send an OTP to the user's email."""
     result = await db.execute(_find_user_query(body.identifier))
     user = result.scalar_one_or_none()
