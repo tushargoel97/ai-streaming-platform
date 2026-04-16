@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Brain,
   Download,
@@ -13,6 +13,12 @@ import {
   Eye,
   ScanSearch,
   MessageSquare,
+  Search,
+  X,
+  ExternalLink,
+  Tag,
+  Zap,
+  HardDrive,
 } from "lucide-react";
 
 import { API_URL as API } from "@/lib/constants";
@@ -39,6 +45,32 @@ interface ModelEntry {
   vision?: boolean;
   file_size_mb?: number;
   context_length?: number;
+  parameters?: string;
+  tags?: string[];
+  strengths?: string;
+}
+
+interface HFSearchResult {
+  repo_id: string;
+  filename: string;
+  mmproj_filename?: string;
+  downloads: number;
+  likes: number;
+  pipeline_tag: string;
+  architecture: string;
+  context_length: number;
+  estimated_size_mb: number;
+  vision: boolean;
+  tags: string[];
+  in_catalog: boolean;
+  available_files: string[];
+}
+
+interface DownloadProgress {
+  progress: number;
+  downloaded_mb: number;
+  total_mb: number;
+  status: string;
 }
 
 function getToken() {
@@ -52,20 +84,53 @@ function authHeaders() {
   };
 }
 
+function formatDownloads(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+const TAG_COLORS: Record<string, string> = {
+  fast: "bg-green-500/20 text-green-400",
+  reasoning: "bg-amber-500/20 text-amber-400",
+  coding: "bg-cyan-500/20 text-cyan-400",
+  json: "bg-indigo-500/20 text-indigo-400",
+  vision: "bg-blue-500/20 text-blue-400",
+  multilingual: "bg-pink-500/20 text-pink-400",
+  new: "bg-yellow-500/20 text-yellow-400",
+  quality: "bg-purple-500/20 text-purple-400",
+  math: "bg-orange-500/20 text-orange-400",
+  lightweight: "bg-emerald-500/20 text-emerald-400",
+  general: "bg-gray-500/20 text-gray-400",
+  instruction: "bg-slate-500/20 text-slate-400",
+  community: "bg-teal-500/20 text-teal-400",
+};
+
 export default function AISettingsPage() {
   const [config, setConfig] = useState<AIConfig | null>(null);
   const [models, setModels] = useState<ModelEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<Record<string, DownloadProgress>>({});
   const [loadingModel, setLoadingModel] = useState<string | null>(null);
   const [deletingModel, setDeletingModel] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  // Form state for external API key (separate since backend doesn't expose it)
+  // Search state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<HFSearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const searchTimeout = useRef<ReturnType<typeof setTimeout>>(null);
+
+  // Form state for external API key
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [aiHealthy, setAiHealthy] = useState<boolean | null>(null);
+
+  // Progress polling ref
+  const progressInterval = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchConfig = async () => {
     try {
@@ -97,8 +162,33 @@ export default function AISettingsPage() {
     }
   };
 
+  const pollProgress = async () => {
+    try {
+      const res = await fetch(`${API}/admin/ai/models/progress`, { headers: authHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setDownloadProgress(data);
+        // If no active downloads, stop polling
+        if (Object.keys(data).length === 0 && progressInterval.current) {
+          clearInterval(progressInterval.current);
+          progressInterval.current = null;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const startProgressPolling = () => {
+    if (progressInterval.current) return;
+    progressInterval.current = setInterval(pollProgress, 1000);
+  };
+
   useEffect(() => {
     Promise.all([fetchConfig(), fetchModels(), checkHealth()]).then(() => setLoading(false));
+    return () => {
+      if (progressInterval.current) clearInterval(progressInterval.current);
+    };
   }, []);
 
   const updateConfig = async (updates: Partial<AIConfig & { external_api_key?: string }>) => {
@@ -126,14 +216,50 @@ export default function AISettingsPage() {
     }
   };
 
-  const downloadModel = async (name: string) => {
+  const searchModels = async (query: string) => {
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    setSearching(true);
+    try {
+      const res = await fetch(
+        `${API}/admin/ai/models/search?q=${encodeURIComponent(query)}&limit=15`,
+        { headers: authHeaders() },
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setSearchResults(data.results || []);
+      }
+    } catch {
+      setError("Search failed — AI service may be offline");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const handleSearchInput = (value: string) => {
+    setSearchQuery(value);
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    if (value.trim().length >= 2) {
+      searchTimeout.current = setTimeout(() => searchModels(value), 400);
+    } else {
+      setSearchResults([]);
+    }
+  };
+
+  const downloadModel = async (
+    name: string,
+    opts?: { repo_id?: string; filename?: string; mmproj_filename?: string },
+  ) => {
     setDownloading(name);
     setError("");
+    startProgressPolling();
     try {
       const res = await fetch(`${API}/admin/ai/models/download`, {
         method: "POST",
         headers: authHeaders(),
-        body: JSON.stringify({ model_name: name }),
+        body: JSON.stringify({ model_name: name, ...opts }),
       });
       if (res.ok) {
         await fetchModels();
@@ -146,6 +272,8 @@ export default function AISettingsPage() {
       setError(`Failed to download ${name}`);
     } finally {
       setDownloading(null);
+      // Final progress poll
+      setTimeout(pollProgress, 500);
     }
   };
 
@@ -323,7 +451,7 @@ export default function AISettingsPage() {
             </div>
           </div>
 
-          {/* External provider config (always visible for fallback) */}
+          {/* External provider config */}
           <div className="space-y-3 pt-2 border-t border-[var(--border)]">
             <p className="text-xs text-gray-500 uppercase tracking-wider">
               External Provider {config.use_external_llm ? "(Primary)" : "(Fallback)"}
@@ -435,99 +563,286 @@ export default function AISettingsPage() {
 
       {/* ── Local Models Card ── */}
       <div className="rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-6">
-        <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-          <Cpu size={20} />
-          Local LLM Models
-        </h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <Cpu size={20} />
+            Local LLM Models
+          </h2>
+          <button
+            onClick={() => setShowSearch(!showSearch)}
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition-colors ${
+              showSearch
+                ? "bg-purple-600 text-white"
+                : "bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white"
+            }`}
+          >
+            <Search size={14} />
+            {showSearch ? "Close Search" : "Search HuggingFace"}
+          </button>
+        </div>
         <p className="text-xs text-gray-500 mb-4">
-          Download and manage GGUF models. Text models run on CPU, vision models require additional mmproj files. All run locally — no API keys or GPU needed.
+          Download and manage GGUF models. All run locally on CPU — no API keys or GPU needed. Search HuggingFace to discover new models.
         </p>
 
-        <div className="space-y-3">
-          {models.map((m) => (
-            <div
-              key={m.name}
-              className={`flex items-center gap-4 rounded-lg border px-4 py-3 ${
-                m.active
-                  ? "border-purple-500/50 bg-purple-500/5"
-                  : "border-[var(--border)] bg-[#0a0a0a]"
-              }`}
-            >
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-medium text-white">{m.name}</span>
-                  {m.vision && (
-                    <span className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 font-medium">
-                      <Eye size={10} /> VISION
-                    </span>
-                  )}
-                  {m.active && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 font-medium">
-                      ACTIVE
-                    </span>
-                  )}
-                  {m.downloaded && !m.active && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 font-medium">
-                      READY
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-gray-500 mt-0.5 truncate">{m.description}</p>
-                <p className="text-xs text-gray-600 mt-0.5">
-                  {m.downloaded && m.file_size_mb
-                    ? `${m.file_size_mb.toLocaleString()} MB on disk`
-                    : `~${(m.size_mb / 1024).toFixed(1)} GB`}
-                  {m.context_length ? ` · ${m.context_length.toLocaleString()} ctx` : ""}
-                  {m.vision ? " · requires mmproj" : ""}
-                </p>
+        {/* ── HuggingFace Search Panel ── */}
+        {showSearch && (
+          <div className="mb-6 rounded-lg border border-purple-500/30 bg-purple-500/5 p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Search size={16} className="text-purple-400" />
+              <h3 className="text-sm font-medium text-purple-300">Search HuggingFace Models</h3>
+            </div>
+            <div className="relative mb-3">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => handleSearchInput(e.target.value)}
+                placeholder="Search for models... (e.g. gemma 4, llama 3, phi, qwen, deepseek)"
+                className="w-full rounded-lg border border-purple-500/30 bg-[#0a0a0a] px-3 py-2 pl-9 text-sm text-white placeholder-gray-600"
+              />
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
+              {searchQuery && (
+                <button
+                  onClick={() => { setSearchQuery(""); setSearchResults([]); }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+            {searching && (
+              <div className="flex items-center gap-2 text-xs text-gray-500 py-3">
+                <Loader2 size={14} className="animate-spin" /> Searching HuggingFace...
               </div>
-
-              <div className="flex items-center gap-2">
-                {!m.downloaded ? (
-                  <button
-                    onClick={() => downloadModel(m.name)}
-                    disabled={downloading !== null}
-                    className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-700 disabled:opacity-50"
+            )}
+            {searchResults.length > 0 && (
+              <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                {searchResults.map((r) => (
+                  <div
+                    key={r.repo_id + r.filename}
+                    className="flex items-start gap-3 rounded-lg border border-[var(--border)] bg-[#0a0a0a] px-3 py-2.5"
                   >
-                    {downloading === m.name ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      <Download size={14} />
-                    )}
-                    {downloading === m.name ? "Downloading..." : "Download"}
-                  </button>
-                ) : (
-                  <>
-                    {!m.active && (
-                      <button
-                        onClick={() => loadModel(m.name)}
-                        disabled={loadingModel !== null}
-                        className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-1.5 text-xs text-white hover:bg-purple-700 disabled:opacity-50"
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium text-white truncate">{r.repo_id.split("/")[1]?.replace(/-GGUF$/i, "")}</span>
+                        {r.vision && (
+                          <span className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 font-medium">
+                            <Eye size={10} /> VISION
+                          </span>
+                        )}
+                        {r.in_catalog && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 font-medium">
+                            IN CATALOG
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-gray-500 mt-0.5 truncate">{r.repo_id}</p>
+                      <div className="flex items-center gap-3 mt-1 text-[11px] text-gray-600">
+                        <span className="flex items-center gap-1">
+                          <Download size={10} /> {formatDownloads(r.downloads)}
+                        </span>
+                        {r.estimated_size_mb > 0 && (
+                          <span className="flex items-center gap-1">
+                            <HardDrive size={10} /> ~{(r.estimated_size_mb / 1024).toFixed(1)} GB
+                          </span>
+                        )}
+                        {r.context_length > 0 && (
+                          <span>{r.context_length.toLocaleString()} ctx</span>
+                        )}
+                        {r.architecture && <span>{r.architecture}</span>}
+                      </div>
+                      <div className="flex items-center gap-1 mt-1 flex-wrap">
+                        {r.tags.slice(0, 5).map((tag) => (
+                          <span
+                            key={tag}
+                            className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${TAG_COLORS[tag] || "bg-gray-500/20 text-gray-400"}`}
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-gray-600 mt-1">
+                        File: {r.filename}
+                        {r.available_files.length > 1 && ` (+${r.available_files.length - 1} variants)`}
+                      </p>
+                    </div>
+                    <div className="flex flex-col items-end gap-1.5 shrink-0">
+                      {r.in_catalog ? (
+                        <span className="text-[11px] text-green-400">Already added</span>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            const name = r.repo_id.split("/")[1]?.replace(/-GGUF$/i, "").toLowerCase().replace(/[^a-z0-9.-]/g, "-") || r.repo_id;
+                            downloadModel(name, {
+                              repo_id: r.repo_id,
+                              filename: r.filename,
+                              mmproj_filename: r.mmproj_filename || undefined,
+                            });
+                          }}
+                          disabled={downloading !== null}
+                          className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          <Download size={12} /> Download
+                        </button>
+                      )}
+                      <a
+                        href={`https://huggingface.co/${r.repo_id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-gray-300"
                       >
-                        {loadingModel === m.name ? (
+                        <ExternalLink size={10} /> View on HF
+                      </a>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {!searching && searchQuery.length >= 2 && searchResults.length === 0 && (
+              <p className="text-xs text-gray-500 py-3 text-center">No GGUF models found for "{searchQuery}"</p>
+            )}
+          </div>
+        )}
+
+        {/* ── Catalog Models List ── */}
+        <div className="space-y-3">
+          {models.map((m) => {
+            const progress = downloadProgress[m.name];
+            const isDownloading = downloading === m.name || (progress && progress.status === "downloading");
+
+            return (
+              <div
+                key={m.name}
+                className={`rounded-lg border px-4 py-3 ${
+                  m.active
+                    ? "border-purple-500/50 bg-purple-500/5"
+                    : "border-[var(--border)] bg-[#0a0a0a]"
+                }`}
+              >
+                <div className="flex items-center gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium text-white">{m.name}</span>
+                      {m.parameters && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-gray-300 font-medium">
+                          {m.parameters}
+                        </span>
+                      )}
+                      {m.vision && (
+                        <span className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 font-medium">
+                          <Eye size={10} /> VISION
+                        </span>
+                      )}
+                      {m.active && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 font-medium">
+                          ACTIVE
+                        </span>
+                      )}
+                      {m.downloaded && !m.active && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 font-medium">
+                          READY
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-0.5 truncate">{m.description}</p>
+
+                    {/* Capability tags */}
+                    {m.tags && m.tags.length > 0 && (
+                      <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                        <Tag size={10} className="text-gray-600" />
+                        {m.tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${TAG_COLORS[tag] || "bg-gray-500/20 text-gray-400"}`}
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Strengths */}
+                    {m.strengths && (
+                      <p className="text-[11px] text-gray-600 mt-1 flex items-start gap-1">
+                        <Zap size={10} className="shrink-0 mt-0.5 text-amber-500/60" />
+                        {m.strengths}
+                      </p>
+                    )}
+
+                    <p className="text-xs text-gray-600 mt-1">
+                      {m.downloaded && m.file_size_mb
+                        ? `${m.file_size_mb.toLocaleString()} MB on disk`
+                        : `~${(m.size_mb / 1024).toFixed(1)} GB`}
+                      {m.context_length ? ` · ${m.context_length.toLocaleString()} ctx` : ""}
+                      {m.vision ? " · requires mmproj" : ""}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    {!m.downloaded ? (
+                      <button
+                        onClick={() => downloadModel(m.name)}
+                        disabled={downloading !== null}
+                        className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        {isDownloading ? (
                           <Loader2 size={14} className="animate-spin" />
                         ) : (
-                          <Play size={14} />
+                          <Download size={14} />
                         )}
-                        Load
+                        {isDownloading ? "Downloading..." : "Download"}
                       </button>
+                    ) : (
+                      <>
+                        {!m.active && (
+                          <button
+                            onClick={() => loadModel(m.name)}
+                            disabled={loadingModel !== null}
+                            className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-1.5 text-xs text-white hover:bg-purple-700 disabled:opacity-50"
+                          >
+                            {loadingModel === m.name ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                              <Play size={14} />
+                            )}
+                            Load
+                          </button>
+                        )}
+                        <button
+                          onClick={() => deleteModel(m.name)}
+                          disabled={deletingModel !== null}
+                          className="p-1.5 rounded-lg text-gray-500 hover:bg-red-500/10 hover:text-red-400"
+                        >
+                          {deletingModel === m.name ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <Trash2 size={14} />
+                          )}
+                        </button>
+                      </>
                     )}
-                    <button
-                      onClick={() => deleteModel(m.name)}
-                      disabled={deletingModel !== null}
-                      className="p-1.5 rounded-lg text-gray-500 hover:bg-red-500/10 hover:text-red-400"
-                    >
-                      {deletingModel === m.name ? (
-                        <Loader2 size={14} className="animate-spin" />
-                      ) : (
-                        <Trash2 size={14} />
-                      )}
-                    </button>
-                  </>
+                  </div>
+                </div>
+
+                {/* Download progress bar */}
+                {isDownloading && progress && progress.progress > 0 && (
+                  <div className="mt-3">
+                    <div className="flex items-center justify-between text-[11px] text-gray-500 mb-1">
+                      <span>{progress.status === "downloading mmproj" ? "Downloading vision module..." : "Downloading..."}</span>
+                      <span>
+                        {progress.downloaded_mb.toFixed(0)} / {progress.total_mb.toFixed(0)} MB ({progress.progress.toFixed(1)}%)
+                      </span>
+                    </div>
+                    <div className="w-full h-1.5 rounded-full bg-white/5 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-blue-500 transition-all duration-300"
+                        style={{ width: `${Math.min(progress.progress, 100)}%` }}
+                      />
+                    </div>
+                  </div>
                 )}
               </div>
-            </div>
-          ))}
+            );
+          })}
 
           {models.length === 0 && (
             <div className="text-center py-8 text-gray-500 text-sm">

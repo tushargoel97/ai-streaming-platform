@@ -312,6 +312,13 @@ export interface AdminTenant {
   primary_color: string;
   secondary_color: string;
   background_color: string;
+  meta_title: string;
+  meta_description: string;
+  meta_keywords: string;
+  og_image_url: string;
+  custom_domain: string;
+  domain_verified: boolean;
+  domain_verification_token: string;
   features: Record<string, boolean>;
   max_content_level: string;
   age_verification: string;

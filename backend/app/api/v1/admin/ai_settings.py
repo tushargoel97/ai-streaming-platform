@@ -63,6 +63,9 @@ class ModelsResponse(BaseModel):
 
 class DownloadModelRequest(BaseModel):
     model_name: str
+    repo_id: str | None = None
+    filename: str | None = None
+    mmproj_filename: str | None = None
 
 
 # ── Helpers ──
@@ -150,14 +153,54 @@ async def list_models():
         raise HTTPException(502, "AI service unavailable")
 
 
+@router.get("/models/search")
+async def search_models(q: str, limit: int = 20):
+    """Search HuggingFace for GGUF models."""
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                _ai_url("/models/search"),
+                params={"q": q, "limit": limit},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception:
+        logger.exception("Model search failed")
+        raise HTTPException(502, "AI service unavailable")
+
+
+@router.get("/models/progress")
+async def download_progress():
+    """Get download progress for all active downloads."""
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(_ai_url("/models/progress"))
+            resp.raise_for_status()
+            return resp.json()
+    except Exception:
+        return {}
+
+
+@router.get("/models/progress/{model_name}")
+async def model_download_progress(model_name: str):
+    """Get download progress for a specific model."""
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(_ai_url(f"/models/progress/{model_name}"))
+            resp.raise_for_status()
+            return resp.json()
+    except Exception:
+        return {"status": "not_downloading"}
+
+
 @router.post("/models/download")
 async def download_model(body: DownloadModelRequest):
-    """Download a local LLM model."""
+    """Download a local LLM model (catalog or search result)."""
     try:
         async with httpx.AsyncClient(timeout=600) as client:
             resp = await client.post(
                 _ai_url("/models/download"),
-                json={"model_name": body.model_name},
+                json=body.model_dump(exclude_none=True),
             )
             resp.raise_for_status()
             return resp.json()

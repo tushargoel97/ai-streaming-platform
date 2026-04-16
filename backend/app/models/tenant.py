@@ -24,6 +24,17 @@ class Tenant(Base):
     secondary_color: Mapped[str] = mapped_column(String(7), default="#141414")
     background_color: Mapped[str] = mapped_column(String(7), default="#000000")
 
+    # SEO / metadata
+    meta_title: Mapped[str] = mapped_column(String(255), default="")
+    meta_description: Mapped[str] = mapped_column(Text, default="")
+    meta_keywords: Mapped[str] = mapped_column(String(500), default="")
+    og_image_url: Mapped[str] = mapped_column(String(500), default="")
+
+    # Custom domain
+    custom_domain: Mapped[str] = mapped_column(String(255), default="")
+    domain_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    domain_verification_token: Mapped[str] = mapped_column(String(100), default="")
+
     # Feature toggles
     features: Mapped[dict] = mapped_column(
         JSONB,

@@ -12,6 +12,7 @@ from app.models.subscription import SubscriptionTier, SubscriptionTierPrice, Use
 from app.models.tournament import Competition
 from app.models.match import Event, EventHighlight
 from app.models.ai_settings import AISettings
+from app.models.cloud_connection import CloudProviderConfig, CloudConnection
 
 __all__ = [
     "Tenant", "TenantVideo", "TenantSeries",
@@ -28,4 +29,5 @@ __all__ = [
     "Competition",
     "Event", "EventHighlight",
     "AISettings",
+    "CloudProviderConfig", "CloudConnection",
 ]

@@ -14,6 +14,12 @@ import {
   Clock,
   RefreshCw,
   ScanSearch,
+  Cloud,
+  FolderOpen,
+  ChevronRight,
+  ArrowLeft,
+  Link2,
+  Unplug,
 } from "lucide-react";
 import { api } from "@/api/client";
 import type { Video, Category, PaginatedResponse, AdminTenant } from "@/types/api";
@@ -249,6 +255,45 @@ export default function VideosPage() {
   const [uploadError, setUploadError] = useState("");
   const [dragOver, setDragOver] = useState(false);
 
+  // Cloud import state
+  type UploadTab = "file" | "cloud";
+  const [uploadTab, setUploadTab] = useState<UploadTab>("file");
+
+  interface CloudProvider {
+    name: string;
+    display_name: string;
+    icon: string;
+    configured: boolean;
+    enabled: boolean;
+    connected: boolean;
+    account_email: string | null;
+    account_name: string | null;
+  }
+  interface CloudFileEntry {
+    id: string;
+    name: string;
+    is_folder: boolean;
+    size: number | null;
+    mime_type: string | null;
+    modified_at: string | null;
+    path: string | null;
+    thumbnail_url: string | null;
+  }
+
+  const [cloudProviders, setCloudProviders] = useState<CloudProvider[]>([]);
+  const [cloudLoading, setCloudLoading] = useState(false);
+  const [activeProvider, setActiveProvider] = useState<string | null>(null);
+  const [cloudFiles, setCloudFiles] = useState<CloudFileEntry[]>([]);
+  const [cloudBrowsing, setCloudBrowsing] = useState(false);
+  const [folderStack, setFolderStack] = useState<{ id: string | null; name: string }[]>([{ id: null, name: "Root" }]);
+  const [selectedCloudFile, setSelectedCloudFile] = useState<CloudFileEntry | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [cloudError, setCloudError] = useState("");
+  const [configuringProvider, setConfiguringProvider] = useState<string | null>(null);
+  const [configClientId, setConfigClientId] = useState("");
+  const [configClientSecret, setConfigClientSecret] = useState("");
+  const [configSaving, setConfigSaving] = useState(false);
+
   // Edit state
   const [editingVideo, setEditingVideo] = useState<Video | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -405,7 +450,169 @@ export default function VideosPage() {
     setUploadMinTierLevel(0);
     setUploadError("");
     setUploadProgress(0);
+    // Reset cloud state
+    setActiveProvider(null);
+    setCloudFiles([]);
+    setFolderStack([{ id: null, name: "Root" }]);
+    setSelectedCloudFile(null);
+    setCloudError("");
+    setUploadTab("file");
   };
+
+  // Cloud import handlers
+  const fetchCloudProviders = async () => {
+    try {
+      setCloudLoading(true);
+      const data = await api.get<{ providers: CloudProvider[] }>("/admin/cloud/providers");
+      setCloudProviders(data.providers);
+    } catch {
+      setCloudError("Failed to load cloud providers");
+    } finally {
+      setCloudLoading(false);
+    }
+  };
+
+  const saveProviderConfig = async (provider: string) => {
+    setConfigSaving(true);
+    setCloudError("");
+    try {
+      await api.patch(`/admin/cloud/providers/${provider}/config`, {
+        client_id: configClientId,
+        client_secret: configClientSecret,
+        enabled: true,
+      });
+      setConfiguringProvider(null);
+      setConfigClientId("");
+      setConfigClientSecret("");
+      await fetchCloudProviders();
+    } catch (err) {
+      setCloudError(err instanceof Error ? err.message : "Failed to save config");
+    } finally {
+      setConfigSaving(false);
+    }
+  };
+
+  const connectProvider = async (provider: string) => {
+    const redirectUri = `${window.location.origin}/admin/videos?cloud_callback=${provider}`;
+    try {
+      const data = await api.get<{ auth_url: string; state: string }>(
+        `/admin/cloud/providers/${provider}/auth-url`,
+        { redirect_uri: redirectUri },
+      );
+      // Store state for validation
+      sessionStorage.setItem("cloud_oauth_state", data.state);
+      sessionStorage.setItem("cloud_oauth_provider", provider);
+      window.location.href = data.auth_url;
+    } catch (err) {
+      setCloudError(err instanceof Error ? err.message : "Failed to start OAuth");
+    }
+  };
+
+  const disconnectProvider = async (provider: string) => {
+    try {
+      await api.delete(`/admin/cloud/providers/${provider}/disconnect`);
+      await fetchCloudProviders();
+      if (activeProvider === provider) {
+        setActiveProvider(null);
+        setCloudFiles([]);
+      }
+    } catch {
+      setCloudError("Failed to disconnect");
+    }
+  };
+
+  const browseProvider = async (provider: string, folderId: string | null = null) => {
+    try {
+      setCloudBrowsing(true);
+      setCloudError("");
+      const params: Record<string, string> = {};
+      if (folderId) params.folder_id = folderId;
+      const data = await api.get<{ files: CloudFileEntry[] }>(
+        `/admin/cloud/providers/${provider}/files`,
+        params,
+      );
+      setCloudFiles(data.files);
+      setActiveProvider(provider);
+    } catch (err) {
+      setCloudError(err instanceof Error ? err.message : "Failed to browse files");
+    } finally {
+      setCloudBrowsing(false);
+    }
+  };
+
+  const openFolder = (file: CloudFileEntry) => {
+    setFolderStack((prev) => [...prev, { id: file.id, name: file.name }]);
+    browseProvider(activeProvider!, file.id);
+  };
+
+  const navigateToFolder = (index: number) => {
+    const newStack = folderStack.slice(0, index + 1);
+    setFolderStack(newStack);
+    const folderId = newStack[newStack.length - 1]?.id ?? null;
+    browseProvider(activeProvider!, folderId);
+  };
+
+  const selectCloudFile = (file: CloudFileEntry) => {
+    setSelectedCloudFile(file);
+    if (!uploadTitle) {
+      const name = file.name.replace(/\.[^.]+$/, "").replace(/[_.-]+/g, " ");
+      setUploadTitle(name);
+    }
+  };
+
+  const handleCloudImport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCloudFile || !activeProvider) return;
+    setImporting(true);
+    setCloudError("");
+    try {
+      await api.post("/admin/cloud/import", {
+        provider: activeProvider,
+        file_id: selectedCloudFile.id,
+        file_name: selectedCloudFile.name,
+        file_size: selectedCloudFile.size,
+        title: uploadTitle,
+        description: uploadDesc,
+        content_classification: uploadClassification,
+        tags: uploadTags,
+        category_ids: uploadCategoryIds,
+        tenant_ids: uploadTenantIds,
+        min_tier_level: uploadMinTierLevel,
+      }, 30000);
+
+      setShowUpload(false);
+      resetUploadForm();
+      fetchVideos();
+      showNotification("Import started — video will appear once downloaded and processed.", true);
+    } catch (err) {
+      setCloudError(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  // Handle OAuth callback on page load
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const callbackProvider = params.get("cloud_callback");
+    const code = params.get("code");
+    if (callbackProvider && code) {
+      const redirectUri = `${window.location.origin}/admin/videos?cloud_callback=${callbackProvider}`;
+      // Clean URL
+      window.history.replaceState({}, "", window.location.pathname);
+      // Exchange code
+      api.post(`/admin/cloud/providers/${callbackProvider}/connect`, {
+        code,
+        redirect_uri: redirectUri,
+      }).then(() => {
+        setShowUpload(true);
+        setUploadTab("cloud");
+        fetchCloudProviders();
+      }).catch(() => {
+        setCloudError("OAuth connection failed");
+      });
+    }
+  }, []);
 
   // Edit handlers
   const openEdit = (video: Video) => {
@@ -746,246 +953,685 @@ export default function VideosPage() {
         )}
       </div>
 
-      {/* ===== Upload Modal ===== */}
+      {/* ===== Upload / Import Modal ===== */}
       {showUpload && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-lg rounded-lg bg-[var(--card)] p-6">
+          <div className="w-full max-w-2xl rounded-lg bg-[var(--card)] p-6 max-h-[90vh] overflow-y-auto">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-bold">Upload Video</h2>
-              <button onClick={() => setShowUpload(false)} className="text-gray-400 hover:text-white">
+              <h2 className="text-lg font-bold">Add Video</h2>
+              <button onClick={() => { setShowUpload(false); resetUploadForm(); }} className="text-gray-400 hover:text-white">
                 <X size={20} />
               </button>
             </div>
 
-            <form onSubmit={handleUpload} className="space-y-4">
-              {uploadError && (
-                <p className="rounded bg-red-500/10 px-3 py-2 text-sm text-red-400">{uploadError}</p>
-              )}
-
-              {/* Drop zone */}
-              <div
-                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={handleFileDrop}
-                onClick={() => fileInputRef.current?.click()}
-                className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-4 py-8 transition-colors ${
-                  dragOver
-                    ? "border-[var(--primary)] bg-[var(--primary)]/10"
-                    : "border-[var(--border)] hover:border-gray-500"
+            {/* Tab switcher */}
+            <div className="mb-4 flex rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-1">
+              <button
+                type="button"
+                onClick={() => setUploadTab("file")}
+                className={`flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+                  uploadTab === "file"
+                    ? "bg-[var(--primary)] text-white"
+                    : "text-gray-400 hover:text-white"
                 }`}
               >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="video/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) selectFile(f);
-                  }}
-                />
-                {uploadFile ? (
-                  <div className="text-center">
-                    <Film size={32} className="mx-auto mb-2 text-[var(--primary)]" />
-                    <p className="font-medium text-white">{uploadFile.name}</p>
-                    <p className="text-sm text-gray-400">{formatBytes(uploadFile.size)}</p>
-                  </div>
-                ) : (
-                  <>
-                    <Upload size={32} className="mb-2 text-gray-500" />
-                    <p className="text-sm text-gray-400">
-                      Drag & drop a video file, or <span className="text-[var(--primary)]">browse</span>
-                    </p>
-                  </>
+                <Upload size={16} /> Upload File
+              </button>
+              <button
+                type="button"
+                onClick={() => { setUploadTab("cloud"); if (cloudProviders.length === 0) fetchCloudProviders(); }}
+                className={`flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+                  uploadTab === "cloud"
+                    ? "bg-[var(--primary)] text-white"
+                    : "text-gray-400 hover:text-white"
+                }`}
+              >
+                <Cloud size={16} /> Import from Cloud
+              </button>
+            </div>
+
+            {/* ── Upload File tab ── */}
+            {uploadTab === "file" && (
+              <form onSubmit={handleUpload} className="space-y-4">
+                {uploadError && (
+                  <p className="rounded bg-red-500/10 px-3 py-2 text-sm text-red-400">{uploadError}</p>
                 )}
-              </div>
 
-              <div>
-                <label className="mb-1 block text-xs text-gray-400">Title</label>
-                <input
-                  type="text"
-                  value={uploadTitle}
-                  onChange={(e) => setUploadTitle(e.target.value)}
-                  className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs text-gray-400">Description</label>
-                <textarea
-                  value={uploadDesc}
-                  onChange={(e) => setUploadDesc(e.target.value)}
-                  rows={3}
-                  className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
-                />
-              </div>
-
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <label className="mb-1 block text-xs text-gray-400">Content Classification</label>
-                  <select
-                    value={uploadClassification}
-                    onChange={(e) => setUploadClassification(e.target.value)}
-                    className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none"
-                  >
-                    <option value="safe">Safe</option>
-                    <option value="mature">Mature</option>
-                    <option value="explicit">Explicit</option>
-                  </select>
+                {/* Drop zone */}
+                <div
+                  onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={handleFileDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-4 py-8 transition-colors ${
+                    dragOver
+                      ? "border-[var(--primary)] bg-[var(--primary)]/10"
+                      : "border-[var(--border)] hover:border-gray-500"
+                  }`}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="video/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) selectFile(f);
+                    }}
+                  />
+                  {uploadFile ? (
+                    <div className="text-center">
+                      <Film size={32} className="mx-auto mb-2 text-[var(--primary)]" />
+                      <p className="font-medium text-white">{uploadFile.name}</p>
+                      <p className="text-sm text-gray-400">{formatBytes(uploadFile.size)}</p>
+                    </div>
+                  ) : (
+                    <>
+                      <Upload size={32} className="mb-2 text-gray-500" />
+                      <p className="text-sm text-gray-400">
+                        Drag & drop a video file, or <span className="text-[var(--primary)]">browse</span>
+                      </p>
+                    </>
+                  )}
                 </div>
-                <div className="flex-1">
-                  <label className="mb-1 block text-xs text-gray-400">Tags (comma-separated)</label>
+
+                <div>
+                  <label className="mb-1 block text-xs text-gray-400">Title</label>
                   <input
                     type="text"
-                    value={uploadTags}
-                    onChange={(e) => setUploadTags(e.target.value)}
-                    placeholder="action, drama"
+                    value={uploadTitle}
+                    onChange={(e) => setUploadTitle(e.target.value)}
+                    className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-gray-400">Description</label>
+                  <textarea
+                    value={uploadDesc}
+                    onChange={(e) => setUploadDesc(e.target.value)}
+                    rows={3}
                     className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
                   />
                 </div>
-              </div>
 
-              {/* Category multi-select */}
-              <div>
-                <label className="mb-1 block text-xs text-gray-400">Categories</label>
-                {categories.length > 0 ? (
-                  <div className="flex flex-wrap gap-2 rounded border border-[var(--border)] bg-[var(--secondary)] p-2">
-                    {categories.map((cat) => {
-                      const selected = uploadCategoryIds.includes(cat.id);
-                      return (
-                        <button
-                          key={cat.id}
-                          type="button"
-                          onClick={() =>
-                            setUploadCategoryIds((prev) =>
-                              selected ? prev.filter((id) => id !== cat.id) : [...prev, cat.id]
-                            )
-                          }
-                          className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                            selected
-                              ? "bg-[var(--primary)] text-white"
-                              : "bg-white/10 text-gray-400 hover:bg-white/20 hover:text-white"
-                          }`}
-                        >
-                          {cat.name}
-                        </button>
-                      );
-                    })}
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className="mb-1 block text-xs text-gray-400">Content Classification</label>
+                    <select
+                      value={uploadClassification}
+                      onChange={(e) => setUploadClassification(e.target.value)}
+                      className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none"
+                    >
+                      <option value="safe">Safe</option>
+                      <option value="mature">Mature</option>
+                      <option value="explicit">Explicit</option>
+                    </select>
                   </div>
-                ) : (
-                  <p className="text-xs text-gray-500">
-                    No categories yet.{" "}
-                    <a href="/admin/categories" className="text-[var(--primary)] hover:underline">
-                      Create categories
-                    </a>{" "}
-                    first.
-                  </p>
-                )}
-              </div>
-
-              {/* Tenant multi-select */}
-              <div>
-                <label className="mb-1 block text-xs text-gray-400">Publish to Tenants</label>
-                {tenants.length > 0 ? (
-                  <div className="flex flex-wrap gap-2 rounded border border-[var(--border)] bg-[var(--secondary)] p-2">
-                    {tenants.map((t) => {
-                      const selected = uploadTenantIds.includes(t.id);
-                      return (
-                        <button
-                          key={t.id}
-                          type="button"
-                          onClick={() =>
-                            setUploadTenantIds((prev) =>
-                              selected ? prev.filter((id) => id !== t.id) : [...prev, t.id]
-                            )
-                          }
-                          className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                            selected
-                              ? "bg-blue-500 text-white"
-                              : "bg-white/10 text-gray-400 hover:bg-white/20 hover:text-white"
-                          }`}
-                        >
-                          {t.site_name}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <p className="text-xs text-gray-500">No tenants available.</p>
-                )}
-              </div>
-
-              {/* Min Subscription Tier */}
-              <div>
-                <label className="mb-1 block text-xs text-gray-400">Min Subscription Tier</label>
-                {(() => {
-                  const relevantTiers = [...subscriptionTiers]
-                    .filter((t) => uploadTenantIds.length === 0 || uploadTenantIds.includes(t.tenant_id))
-                    .sort((a, b) => a.tier_level - b.tier_level);
-                  return (
-                    <>
-                      <select
-                        value={uploadMinTierLevel}
-                        onChange={(e) => setUploadMinTierLevel(Number(e.target.value))}
-                        className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
-                      >
-                        <option value={0}>Free (all users)</option>
-                        {relevantTiers.map((tier) => {
-                          const tenant = tenants.find((t) => t.id === tier.tenant_id);
-                          return (
-                            <option key={tier.id} value={tier.tier_level}>
-                              {tier.name} (Level {tier.tier_level}){tenant ? ` — ${tenant.site_name}` : ""}
-                            </option>
-                          );
-                        })}
-                      </select>
-                      {uploadTenantIds.length === 0 && subscriptionTiers.length > 0 && (
-                        <p className="mt-1 text-[11px] text-gray-500">Select tenants above to filter available tiers.</p>
-                      )}
-                    </>
-                  );
-                })()}
-              </div>
-
-              {/* Progress bar */}
-              {uploading && (
-                <div>
-                  <div className="mb-1 flex justify-between text-xs text-gray-400">
-                    <span>Uploading...</span>
-                    <span>{uploadProgress}%</span>
-                  </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-[var(--secondary)]">
-                    <div
-                      className="h-full rounded-full bg-[var(--primary)] transition-all"
-                      style={{ width: `${uploadProgress}%` }}
+                  <div className="flex-1">
+                    <label className="mb-1 block text-xs text-gray-400">Tags (comma-separated)</label>
+                    <input
+                      type="text"
+                      value={uploadTags}
+                      onChange={(e) => setUploadTags(e.target.value)}
+                      placeholder="action, drama"
+                      className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
                     />
                   </div>
                 </div>
-              )}
 
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowUpload(false)}
-                  className="rounded px-4 py-2 text-sm text-gray-400 hover:text-white"
-                  disabled={uploading}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={!uploadFile || uploading}
-                  className="flex items-center gap-2 rounded bg-[var(--primary)] px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50"
-                >
-                  {uploading ? (
-                    <><Loader2 size={14} className="animate-spin" /> Uploading...</>
+                {/* Category multi-select */}
+                <div>
+                  <label className="mb-1 block text-xs text-gray-400">Categories</label>
+                  {categories.length > 0 ? (
+                    <div className="flex flex-wrap gap-2 rounded border border-[var(--border)] bg-[var(--secondary)] p-2">
+                      {categories.map((cat) => {
+                        const selected = uploadCategoryIds.includes(cat.id);
+                        return (
+                          <button
+                            key={cat.id}
+                            type="button"
+                            onClick={() =>
+                              setUploadCategoryIds((prev) =>
+                                selected ? prev.filter((id) => id !== cat.id) : [...prev, cat.id]
+                              )
+                            }
+                            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                              selected
+                                ? "bg-[var(--primary)] text-white"
+                                : "bg-white/10 text-gray-400 hover:bg-white/20 hover:text-white"
+                            }`}
+                          >
+                            {cat.name}
+                          </button>
+                        );
+                      })}
+                    </div>
                   ) : (
-                    <><Upload size={14} /> Upload</>
+                    <p className="text-xs text-gray-500">
+                      No categories yet.{" "}
+                      <a href="/admin/categories" className="text-[var(--primary)] hover:underline">
+                        Create categories
+                      </a>{" "}
+                      first.
+                    </p>
                   )}
-                </button>
+                </div>
+
+                {/* Tenant multi-select */}
+                <div>
+                  <label className="mb-1 block text-xs text-gray-400">Publish to Tenants</label>
+                  {tenants.length > 0 ? (
+                    <div className="flex flex-wrap gap-2 rounded border border-[var(--border)] bg-[var(--secondary)] p-2">
+                      {tenants.map((t) => {
+                        const selected = uploadTenantIds.includes(t.id);
+                        return (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() =>
+                              setUploadTenantIds((prev) =>
+                                selected ? prev.filter((id) => id !== t.id) : [...prev, t.id]
+                              )
+                            }
+                            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                              selected
+                                ? "bg-blue-500 text-white"
+                                : "bg-white/10 text-gray-400 hover:bg-white/20 hover:text-white"
+                            }`}
+                          >
+                            {t.site_name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-500">No tenants available.</p>
+                  )}
+                </div>
+
+                {/* Min Subscription Tier */}
+                <div>
+                  <label className="mb-1 block text-xs text-gray-400">Min Subscription Tier</label>
+                  {(() => {
+                    const relevantTiers = [...subscriptionTiers]
+                      .filter((t) => uploadTenantIds.length === 0 || uploadTenantIds.includes(t.tenant_id))
+                      .sort((a, b) => a.tier_level - b.tier_level);
+                    return (
+                      <>
+                        <select
+                          value={uploadMinTierLevel}
+                          onChange={(e) => setUploadMinTierLevel(Number(e.target.value))}
+                          className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
+                        >
+                          <option value={0}>Free (all users)</option>
+                          {relevantTiers.map((tier) => {
+                            const tenant = tenants.find((t) => t.id === tier.tenant_id);
+                            return (
+                              <option key={tier.id} value={tier.tier_level}>
+                                {tier.name} (Level {tier.tier_level}){tenant ? ` — ${tenant.site_name}` : ""}
+                              </option>
+                            );
+                          })}
+                        </select>
+                        {uploadTenantIds.length === 0 && subscriptionTiers.length > 0 && (
+                          <p className="mt-1 text-[11px] text-gray-500">Select tenants above to filter available tiers.</p>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+
+                {/* Progress bar */}
+                {uploading && (
+                  <div>
+                    <div className="mb-1 flex justify-between text-xs text-gray-400">
+                      <span>Uploading...</span>
+                      <span>{uploadProgress}%</span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-[var(--secondary)]">
+                      <div
+                        className="h-full rounded-full bg-[var(--primary)] transition-all"
+                        style={{ width: `${uploadProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowUpload(false)}
+                    className="rounded px-4 py-2 text-sm text-gray-400 hover:text-white"
+                    disabled={uploading}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!uploadFile || uploading}
+                    className="flex items-center gap-2 rounded bg-[var(--primary)] px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50"
+                  >
+                    {uploading ? (
+                      <><Loader2 size={14} className="animate-spin" /> Uploading...</>
+                    ) : (
+                      <><Upload size={14} /> Upload</>
+                    )}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* ── Cloud Import tab ── */}
+            {uploadTab === "cloud" && (
+              <div className="space-y-4">
+                {(cloudError || uploadError) && (
+                  <p className="rounded bg-red-500/10 px-3 py-2 text-sm text-red-400">{cloudError || uploadError}</p>
+                )}
+
+                {/* Provider selection — before file browsing */}
+                {!activeProvider && (
+                  <>
+                    {cloudLoading ? (
+                      <div className="flex items-center justify-center py-12">
+                        <Loader2 size={24} className="animate-spin text-gray-400" />
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <p className="text-sm text-gray-400">Select a cloud storage provider to import videos from.</p>
+                        {cloudProviders.map((p) => (
+                          <div
+                            key={p.name}
+                            className="rounded-lg border border-[var(--border)] bg-[var(--secondary)]"
+                          >
+                            <div className="flex items-center justify-between p-4">
+                              <div className="flex items-center gap-3">
+                                <Cloud size={24} className={p.connected ? "text-green-400" : p.configured ? "text-blue-400" : "text-gray-500"} />
+                                <div>
+                                  <p className="font-medium text-white">{p.display_name}</p>
+                                  {p.connected && p.account_email && (
+                                    <p className="text-xs text-gray-400">{p.account_email}</p>
+                                  )}
+                                  {!p.configured && configuringProvider !== p.name && (
+                                    <p className="text-xs text-gray-500">OAuth credentials not set</p>
+                                  )}
+                                  {p.configured && !p.connected && (
+                                    <p className="text-xs text-blue-400">Configured — ready to connect</p>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {p.connected ? (
+                                  <>
+                                    <button
+                                      onClick={() => {
+                                        setFolderStack([{ id: null, name: "Root" }]);
+                                        browseProvider(p.name);
+                                      }}
+                                      className="flex items-center gap-1.5 rounded bg-[var(--primary)] px-3 py-1.5 text-xs font-medium hover:opacity-90"
+                                    >
+                                      <FolderOpen size={14} /> Browse
+                                    </button>
+                                    <button
+                                      onClick={() => disconnectProvider(p.name)}
+                                      className="flex items-center gap-1 rounded px-2 py-1.5 text-xs text-gray-400 hover:text-red-400"
+                                      title="Disconnect"
+                                    >
+                                      <Unplug size={14} />
+                                    </button>
+                                  </>
+                                ) : p.configured ? (
+                                  <>
+                                    <button
+                                      onClick={() => connectProvider(p.name)}
+                                      className="flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500"
+                                    >
+                                      <Link2 size={14} /> Connect
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setConfiguringProvider(configuringProvider === p.name ? null : p.name);
+                                        setConfigClientId("");
+                                        setConfigClientSecret("");
+                                      }}
+                                      className="text-xs text-gray-400 hover:text-white"
+                                    >
+                                      <Edit3 size={14} />
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button
+                                    onClick={() => {
+                                      setConfiguringProvider(p.name);
+                                      setConfigClientId("");
+                                      setConfigClientSecret("");
+                                    }}
+                                    className="flex items-center gap-1.5 rounded bg-white/10 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/20"
+                                  >
+                                    Configure
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Inline OAuth config form */}
+                            {configuringProvider === p.name && (
+                              <div className="border-t border-[var(--border)] p-4 space-y-3">
+                                <p className="text-xs text-gray-400">
+                                  {p.name === "google_drive" && "Create credentials at console.cloud.google.com — enable the Google Drive API, create an OAuth 2.0 Client ID (Web application), and add the redirect URI shown below."}
+                                  {p.name === "onedrive" && "Register an app at portal.azure.com — Microsoft Entra ID > App registrations. Add the redirect URI shown below."}
+                                  {p.name === "dropbox" && "Create an app at dropbox.com/developers — choose \"Full Dropbox\" access and add the redirect URI shown below."}
+                                </p>
+                                <div>
+                                  <label className="mb-1 block text-[11px] text-gray-500">Redirect URI (add this to your OAuth app)</label>
+                                  <code className="block rounded bg-black/30 px-2 py-1.5 text-xs text-gray-300 select-all">
+                                    {window.location.origin}/admin/videos?cloud_callback={p.name}
+                                  </code>
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-xs text-gray-400">Client ID</label>
+                                  <input
+                                    type="text"
+                                    value={configClientId}
+                                    onChange={(e) => setConfigClientId(e.target.value)}
+                                    placeholder="e.g. 123456789.apps.googleusercontent.com"
+                                    className="w-full rounded border border-[var(--border)] bg-black/20 px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-xs text-gray-400">Client Secret</label>
+                                  <input
+                                    type="password"
+                                    value={configClientSecret}
+                                    onChange={(e) => setConfigClientSecret(e.target.value)}
+                                    placeholder="GOCSPX-..."
+                                    className="w-full rounded border border-[var(--border)] bg-black/20 px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
+                                  />
+                                </div>
+                                <div className="flex justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfiguringProvider(null)}
+                                    className="rounded px-3 py-1.5 text-xs text-gray-400 hover:text-white"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={!configClientId || !configClientSecret || configSaving}
+                                    onClick={() => saveProviderConfig(p.name)}
+                                    className="flex items-center gap-1.5 rounded bg-[var(--primary)] px-3 py-1.5 text-xs font-medium hover:opacity-90 disabled:opacity-50"
+                                  >
+                                    {configSaving ? <Loader2 size={12} className="animate-spin" /> : null}
+                                    Save & Enable
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        {cloudProviders.length === 0 && !cloudLoading && (
+                          <p className="py-8 text-center text-sm text-gray-500">
+                            No cloud providers available. Configure OAuth credentials in admin settings.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* File browser — once a provider is active */}
+                {activeProvider && !selectedCloudFile && (
+                  <div>
+                    {/* Breadcrumb + back button */}
+                    <div className="mb-3 flex items-center gap-2">
+                      <button
+                        onClick={() => { setActiveProvider(null); setCloudFiles([]); setFolderStack([{ id: null, name: "Root" }]); }}
+                        className="flex items-center gap-1 text-xs text-gray-400 hover:text-white"
+                      >
+                        <ArrowLeft size={14} /> Providers
+                      </button>
+                      <span className="text-gray-600">/</span>
+                      {folderStack.map((f, i) => (
+                        <span key={i} className="flex items-center gap-1">
+                          {i > 0 && <ChevronRight size={12} className="text-gray-600" />}
+                          <button
+                            onClick={() => navigateToFolder(i)}
+                            className={`text-xs ${i === folderStack.length - 1 ? "text-white font-medium" : "text-gray-400 hover:text-white"}`}
+                          >
+                            {f.name}
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+
+                    {cloudBrowsing ? (
+                      <div className="flex items-center justify-center py-12">
+                        <Loader2 size={24} className="animate-spin text-gray-400" />
+                      </div>
+                    ) : cloudFiles.length === 0 ? (
+                      <div className="py-12 text-center">
+                        <FolderOpen size={32} className="mx-auto mb-2 text-gray-600" />
+                        <p className="text-sm text-gray-500">No video files found in this folder</p>
+                      </div>
+                    ) : (
+                      <div className="max-h-64 space-y-1 overflow-y-auto rounded-lg border border-[var(--border)]">
+                        {/* Folders first, then files */}
+                        {cloudFiles.map((file) => (
+                          <button
+                            key={file.id}
+                            onClick={() => file.is_folder ? openFolder(file) : selectCloudFile(file)}
+                            className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-white/5 transition-colors"
+                          >
+                            {file.is_folder ? (
+                              <FolderOpen size={18} className="shrink-0 text-yellow-400" />
+                            ) : (
+                              <Film size={18} className="shrink-0 text-[var(--primary)]" />
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm text-white">{file.name}</p>
+                              {!file.is_folder && file.size && (
+                                <p className="text-xs text-gray-500">{formatBytes(file.size)}</p>
+                              )}
+                            </div>
+                            {file.is_folder && <ChevronRight size={16} className="shrink-0 text-gray-500" />}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Selected file — show metadata form */}
+                {activeProvider && selectedCloudFile && (
+                  <form onSubmit={handleCloudImport} className="space-y-4">
+                    {/* Selected file preview */}
+                    <div className="flex items-center gap-3 rounded-lg border border-[var(--primary)]/30 bg-[var(--primary)]/5 p-3">
+                      <Film size={24} className="shrink-0 text-[var(--primary)]" />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-medium text-white">{selectedCloudFile.name}</p>
+                        {selectedCloudFile.size && (
+                          <p className="text-xs text-gray-400">{formatBytes(selectedCloudFile.size)}</p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { setSelectedCloudFile(null); setUploadTitle(""); }}
+                        className="text-gray-400 hover:text-white"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-xs text-gray-400">Title</label>
+                      <input
+                        type="text"
+                        value={uploadTitle}
+                        onChange={(e) => setUploadTitle(e.target.value)}
+                        className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-xs text-gray-400">Description</label>
+                      <textarea
+                        value={uploadDesc}
+                        onChange={(e) => setUploadDesc(e.target.value)}
+                        rows={2}
+                        className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
+                      />
+                    </div>
+
+                    <div className="flex gap-3">
+                      <div className="flex-1">
+                        <label className="mb-1 block text-xs text-gray-400">Content Classification</label>
+                        <select
+                          value={uploadClassification}
+                          onChange={(e) => setUploadClassification(e.target.value)}
+                          className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none"
+                        >
+                          <option value="safe">Safe</option>
+                          <option value="mature">Mature</option>
+                          <option value="explicit">Explicit</option>
+                        </select>
+                      </div>
+                      <div className="flex-1">
+                        <label className="mb-1 block text-xs text-gray-400">Tags (comma-separated)</label>
+                        <input
+                          type="text"
+                          value={uploadTags}
+                          onChange={(e) => setUploadTags(e.target.value)}
+                          placeholder="action, drama"
+                          className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Category multi-select */}
+                    <div>
+                      <label className="mb-1 block text-xs text-gray-400">Categories</label>
+                      {categories.length > 0 ? (
+                        <div className="flex flex-wrap gap-2 rounded border border-[var(--border)] bg-[var(--secondary)] p-2">
+                          {categories.map((cat) => {
+                            const selected = uploadCategoryIds.includes(cat.id);
+                            return (
+                              <button
+                                key={cat.id}
+                                type="button"
+                                onClick={() =>
+                                  setUploadCategoryIds((prev) =>
+                                    selected ? prev.filter((id) => id !== cat.id) : [...prev, cat.id]
+                                  )
+                                }
+                                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                                  selected
+                                    ? "bg-[var(--primary)] text-white"
+                                    : "bg-white/10 text-gray-400 hover:bg-white/20 hover:text-white"
+                                }`}
+                              >
+                                {cat.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-500">
+                          No categories yet.{" "}
+                          <a href="/admin/categories" className="text-[var(--primary)] hover:underline">
+                            Create categories
+                          </a>{" "}
+                          first.
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Tenant multi-select */}
+                    <div>
+                      <label className="mb-1 block text-xs text-gray-400">Publish to Tenants</label>
+                      {tenants.length > 0 ? (
+                        <div className="flex flex-wrap gap-2 rounded border border-[var(--border)] bg-[var(--secondary)] p-2">
+                          {tenants.map((t) => {
+                            const selected = uploadTenantIds.includes(t.id);
+                            return (
+                              <button
+                                key={t.id}
+                                type="button"
+                                onClick={() =>
+                                  setUploadTenantIds((prev) =>
+                                    selected ? prev.filter((id) => id !== t.id) : [...prev, t.id]
+                                  )
+                                }
+                                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                                  selected
+                                    ? "bg-blue-500 text-white"
+                                    : "bg-white/10 text-gray-400 hover:bg-white/20 hover:text-white"
+                                }`}
+                              >
+                                {t.site_name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-500">No tenants available.</p>
+                      )}
+                    </div>
+
+                    {/* Min Subscription Tier */}
+                    <div>
+                      <label className="mb-1 block text-xs text-gray-400">Min Subscription Tier</label>
+                      {(() => {
+                        const relevantTiers = [...subscriptionTiers]
+                          .filter((t) => uploadTenantIds.length === 0 || uploadTenantIds.includes(t.tenant_id))
+                          .sort((a, b) => a.tier_level - b.tier_level);
+                        return (
+                          <select
+                            value={uploadMinTierLevel}
+                            onChange={(e) => setUploadMinTierLevel(Number(e.target.value))}
+                            className="w-full rounded border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm text-white outline-none focus:border-[var(--primary)]"
+                          >
+                            <option value={0}>Free (all users)</option>
+                            {relevantTiers.map((tier) => {
+                              const tenant = tenants.find((t) => t.id === tier.tenant_id);
+                              return (
+                                <option key={tier.id} value={tier.tier_level}>
+                                  {tier.name} (Level {tier.tier_level}){tenant ? ` — ${tenant.site_name}` : ""}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        );
+                      })()}
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => { setSelectedCloudFile(null); setUploadTitle(""); }}
+                        className="rounded px-4 py-2 text-sm text-gray-400 hover:text-white"
+                        disabled={importing}
+                      >
+                        Back
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={importing}
+                        className="flex items-center gap-2 rounded bg-[var(--primary)] px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50"
+                      >
+                        {importing ? (
+                          <><Loader2 size={14} className="animate-spin" /> Importing...</>
+                        ) : (
+                          <><Cloud size={14} /> Import</>
+                        )}
+                      </button>
+                    </div>
+                  </form>
+                )}
               </div>
-            </form>
+            )}
           </div>
         </div>
       )}

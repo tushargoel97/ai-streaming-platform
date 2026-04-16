@@ -4,6 +4,7 @@ from app.api.v1 import auth, categories, competitions, feed, health, live, media
 from app.api.v1.admin import analytics as admin_analytics
 from app.api.v1.admin import competitions as admin_competitions
 from app.api.v1.admin import ai_settings as admin_ai_settings
+from app.api.v1.admin import cloud as admin_cloud
 from app.api.v1.admin import events as admin_events
 from app.api.v1.admin import categories as admin_categories
 from app.api.v1.admin import live as admin_live
@@ -45,3 +46,4 @@ api_router.include_router(admin_subscriptions.router, tags=["admin-subscriptions
 api_router.include_router(admin_competitions.router, tags=["admin-competitions"])
 api_router.include_router(admin_events.router, tags=["admin-events"])
 api_router.include_router(admin_ai_settings.router, tags=["admin-ai"])
+api_router.include_router(admin_cloud.router, tags=["admin-cloud"])
